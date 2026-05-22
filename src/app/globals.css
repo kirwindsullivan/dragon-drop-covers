@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-display: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --font-body: system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html,
+  body {
+    height: 100%;
+    background-color: theme("colors.surface.DEFAULT");
+    color: white;
+    font-family: var(--font-body);
+  }
+
+  /* Custom scrollbar */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: theme("colors.surface.3") transparent;
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer components {
+  .label-xs {
+    @apply block text-xs font-semibold uppercase tracking-widest text-brand-300/70 mb-1.5;
+  }
+
+  .input-field {
+    @apply w-full rounded-lg border border-surface-3 bg-surface-1 px-3 py-2 text-sm text-white placeholder:text-brand-300/40 focus:border-brand-500 focus:outline-none transition-colors;
+  }
+}
+
+/* Range input styling */
+input[type="range"] {
+  height: 4px;
+  border-radius: 2px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: theme("colors.surface.3");
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: theme("colors.brand.400");
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.6);
+}

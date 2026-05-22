@@ -1,0 +1,106 @@
+export type BookSize =
+  | "hardcover"
+  | "softcover"
+  | "digest"
+  | "zine"
+  | "letter";
+
+export type BackgroundMode = "solid" | "gradient" | "image";
+
+export interface BackgroundPreset {
+  id: string;
+  name: string;
+  mode: BackgroundMode;
+  /** CSS color or gradient value, or URL for image mode */
+  value: string;
+  /** Second stop for gradients */
+  value2?: string;
+  angle?: number;
+}
+
+export interface MoodPreset {
+  id: string;
+  name: string;
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  vignette: number;
+}
+
+export interface LightingState {
+  /** 0–1 normalized pad position, maps to azimuth/elevation */
+  padX: number;
+  padY: number;
+  ambientIntensity: number;
+  pointIntensity: number;
+}
+
+export interface PhotoAdjustments {
+  brightness: number;   // -1 to 1
+  contrast: number;     // -1 to 1
+  saturation: number;   // -1 to 1
+  vignette: number;     // 0 to 1
+}
+
+export interface TextOverlay {
+  title: string;
+  tagline: string;
+  logoUrl: string | null;
+  titleColor: string;
+  taglineColor: string;
+  titleSize: number;
+  taglineSize: number;
+  position: "top" | "center" | "bottom";
+}
+
+export type ExportMode = "compositing" | "quickpost" | "shadow-only";
+
+export type ExportFormat = "png" | "webp";
+
+export interface ExportPreset {
+  id: string;
+  platform: string;
+  name: string;
+  width: number;
+  height: number;
+  paid?: boolean;
+  icon?: string;
+}
+
+export type AccountTier = "free" | "paid";
+
+export interface EditorState {
+  // Book
+  bookSize: BookSize;
+  coverImageUrl: string | null;
+  coverImageFile: File | null;
+  spineTitle: string;
+
+  // Background
+  background: BackgroundPreset;
+
+  // Lighting
+  lighting: LightingState;
+
+  // Photo adjustments
+  photo: PhotoAdjustments;
+
+  // Text overlay
+  textOverlay: TextOverlay;
+
+  // Export
+  exportMode: ExportMode;
+  exportFormat: ExportFormat;
+  exportPresetId: string;
+  customWidth: number;
+  customHeight: number;
+
+  // Camera
+  autoRotate: boolean;
+
+  // UI state
+  activePanel: "cover" | "background" | "lighting" | "adjust" | "text" | "export";
+
+  // Account
+  tier: AccountTier;
+}
