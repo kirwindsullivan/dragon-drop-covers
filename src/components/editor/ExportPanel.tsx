@@ -36,8 +36,7 @@ export function ExportPanel({ onExport }: ExportPanelProps) {
   const canExport = !isPaidPreset || tier === "paid";
 
   const isLocked = (preset: typeof EXPORT_PRESETS[0]) =>
-    (preset.paid && tier === "free") ||
-    (Math.max(preset.width, preset.height) > FREE_MAX_DIMENSION * 1.5 && tier === "free");
+    preset.paid === true && tier === "free";
 
   const handleExport = useCallback(async () => {
     if (!canExport) return;
