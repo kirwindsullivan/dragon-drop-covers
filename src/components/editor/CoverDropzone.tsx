@@ -1,28 +1,139 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
-import { ImageIcon, UploadCloud, X } from "lucide-react";
+import { ImageIcon, UploadCloud, X, AlertCircle } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
 import { cn } from "@/lib/utils";
 
-export function CoverDropzone() {
-  const coverUrl = useEditorStore((s) => s.coverImageUrl);
-  const setCoverImage = useEditorStore((s) => s.setCoverImage);
-  const bookSize = useEditorStore((s) => s.bookSize);
-  const setSpineTitle = useEditorStore((s) => s.setSpineTitle);
-  const spineTitle = useEditorStore((s) => s.spineTitle);
-  const [isDragOver, setIsDragOver] = useState(false);
+const LS_KEY = "ddcovers.r2key"; // localStorage key for cross-session persistence
 
+// ── R2 upload with XHR progress ───────────────────────────────────────────────
+
+function uploadToR2(
+  url: string,
+  file: File,
+  onProgress: (pct: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    xhr.setRequestHeader("Content-Type", file.type);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`R2 upload failed: HTTP ${xhr.status}`));
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.send(file);
+  });
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export function CoverDropzone() {
+  const coverUrl      = useEditorStore((s) => s.coverImageUrl);
+  const coverR2Key    = useEditorStore((s) => s.coverR2Key);
+  const setCoverImage = useEditorStore((s) => s.setCoverImage);
+  const setCoverR2Key = useEditorStore((s) => s.setCoverR2Key);
+  const bookSize      = useEditorStore((s) => s.bookSize);
+  const setSpineTitle = useEditorStore((s) => s.setSpineTitle);
+  const spineTitle    = useEditorStore((s) => s.spineTitle);
+
+  const [isDragOver, setIsDragOver]   = useState(false);
+  const [uploadPct, setUploadPct]     = useState<number | null>(null); // null = idle
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // ── Restore cover from previous session ──────────────────────────────────────
+  useEffect(() => {
+    // Only restore if no cover is loaded yet
+    if (coverUrl) return;
+    const savedKey = localStorage.getItem(LS_KEY);
+    if (!savedKey) return;
+
+    fetch(`/api/upload/signed-url?key=${encodeURIComponent(savedKey)}`)
+      .then((r) => r.json())
+      .then(({ readUrl }: { readUrl?: string }) => {
+        if (readUrl) {
+          setCoverImage(readUrl, null, savedKey);
+        } else {
+          localStorage.removeItem(LS_KEY); // key no longer valid
+        }
+      })
+      .catch(() => localStorage.removeItem(LS_KEY));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Drop handler ──────────────────────────────────────────────────────────────
   const onDrop = useCallback(
-    (accepted: File[]) => {
+    async (accepted: File[]) => {
       const file = accepted[0];
       if (!file) return;
-      const url = URL.createObjectURL(file);
-      setCoverImage(url, file);
+
       setIsDragOver(false);
+      setUploadError(null);
+
+      // Immediate local preview so Three.js loads without waiting for R2
+      const localUrl = URL.createObjectURL(file);
+      setCoverImage(localUrl, file, null);
+
+      // Start upload
+      setUploadPct(0);
+      try {
+        // Step 1: get presigned URLs from our API
+        const res = await fetch("/api/upload/cover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contentType: file.type,
+            filename: file.name,
+          }),
+        });
+        if (!res.ok) throw new Error(`API error ${res.status}`);
+        const { uploadUrl, readUrl, key } = await res.json() as {
+          uploadUrl: string;
+          readUrl: string;
+          key: string;
+        };
+
+        // Step 2: upload directly to R2
+        await uploadToR2(uploadUrl, file, setUploadPct);
+
+        // Step 3: swap local blob URL → signed R2 read URL
+        URL.revokeObjectURL(localUrl);
+        setCoverImage(readUrl, file, key);
+        localStorage.setItem(LS_KEY, key);
+      } catch (err) {
+        console.error("Cover upload failed:", err);
+        setUploadError("Upload failed — cover loaded locally only.");
+        // Keep the local blob URL so the 3D viewer still works this session
+      } finally {
+        setUploadPct(null);
+      }
     },
     [setCoverImage],
+  );
+
+  // ── Remove handler ────────────────────────────────────────────────────────────
+  const handleRemove = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const key = coverR2Key;
+      setCoverImage(null, null, null);
+      localStorage.removeItem(LS_KEY);
+
+      if (key) {
+        // Fire-and-forget delete from R2
+        fetch("/api/upload/cover", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key }),
+        }).catch(console.error);
+      }
+    },
+    [coverR2Key, setCoverImage],
   );
 
   const { getRootProps, getInputProps } = useDropzone({
@@ -31,7 +142,10 @@ export function CoverDropzone() {
     maxFiles: 1,
     onDragEnter: () => setIsDragOver(true),
     onDragLeave: () => setIsDragOver(false),
+    disabled: uploadPct !== null,
   });
+
+  const uploading = uploadPct !== null;
 
   return (
     <div className="space-y-4">
@@ -41,7 +155,9 @@ export function CoverDropzone() {
         className={cn(
           "relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed cursor-pointer transition-all",
           "min-h-[140px] p-4 text-center",
-          isDragOver
+          uploading
+            ? "border-brand-500 bg-brand-900/20 cursor-wait"
+            : isDragOver
             ? "border-brand-400 bg-brand-900/40"
             : coverUrl
             ? "border-brand-600/50 bg-surface-2"
@@ -50,7 +166,21 @@ export function CoverDropzone() {
       >
         <input {...getInputProps()} />
 
-        {coverUrl ? (
+        {uploading ? (
+          // ── Upload progress ──────────────────────────────────────────────
+          <div className="flex flex-col items-center gap-3 w-full">
+            <UploadCloud className="h-8 w-8 text-brand-400 animate-pulse" />
+            <p className="text-xs font-medium text-brand-200">Uploading…</p>
+            <div className="w-full max-w-[160px] h-1.5 rounded-full bg-surface-3 overflow-hidden">
+              <div
+                className="h-full bg-brand-500 rounded-full transition-all duration-100"
+                style={{ width: `${uploadPct}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-brand-300/50">{uploadPct}%</p>
+          </div>
+        ) : coverUrl ? (
+          // ── Preview ──────────────────────────────────────────────────────
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -59,10 +189,11 @@ export function CoverDropzone() {
               className="max-h-32 rounded shadow-lg object-contain"
             />
             <p className="mt-2 text-xs text-brand-300">
-              Drop a new image to replace
+              {coverR2Key ? "Saved to cloud · Drop to replace" : "Local only · Drop to replace"}
             </p>
           </>
         ) : (
+          // ── Empty state ──────────────────────────────────────────────────
           <>
             <UploadCloud
               className={cn(
@@ -70,23 +201,24 @@ export function CoverDropzone() {
                 isDragOver ? "text-brand-400" : "text-brand-600",
               )}
             />
-            <p className="text-sm font-medium text-white">
-              Drop your front cover here
-            </p>
-            <p className="mt-1 text-xs text-brand-300/70">
-              PNG, JPG, WebP — any size
-            </p>
+            <p className="text-sm font-medium text-white">Drop your front cover here</p>
+            <p className="mt-1 text-xs text-brand-300/70">PNG, JPG, WebP — any size</p>
           </>
         )}
       </div>
 
+      {/* Upload error */}
+      {uploadError && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-800/40 bg-red-950/30 p-3 text-xs text-red-300">
+          <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          {uploadError}
+        </div>
+      )}
+
       {/* Clear button */}
-      {coverUrl && (
+      {coverUrl && !uploading && (
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setCoverImage(null, null);
-          }}
+          onClick={handleRemove}
           className="flex items-center gap-1.5 text-xs text-brand-300 hover:text-white transition-colors"
         >
           <X className="h-3.5 w-3.5" />
@@ -102,11 +234,11 @@ export function CoverDropzone() {
         <div className="grid grid-cols-2 gap-2">
           {(
             [
-              ["hardcover", "Hardcover"],
-              ["softcover", "Softcover"],
-              ["digest", "Digest"],
-              ["zine", "Zine"],
-              ["letter", "Letter / Large"],
+              ["hardcover",  "Hardcover"],
+              ["softcover",  "Softcover"],
+              ["digest",     "Digest"],
+              ["zine",       "Zine"],
+              ["letter",     "Letter / Large"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -130,7 +262,7 @@ export function CoverDropzone() {
         <label className="block mb-1.5 text-xs font-semibold uppercase tracking-widest text-brand-300/70">
           Spine Title
           <span className="ml-1 normal-case font-normal text-brand-300/50">
-            (AI-generated on spine)
+            (rendered on spine)
           </span>
         </label>
         <input
@@ -142,11 +274,13 @@ export function CoverDropzone() {
         />
       </div>
 
-      {/* AI disclaimer */}
+      {/* Info */}
       <div className="rounded-lg border border-brand-800/40 bg-brand-950/30 p-3 text-xs text-brand-300/60">
         <ImageIcon className="mb-1 inline-block h-3.5 w-3.5 mr-1" />
-        Spine &amp; back cover are algorithmically generated from your front cover&apos;s dominant colors.
-        Customizable in future update.
+        Spine &amp; back cover are generated from your front cover&apos;s dominant colors.
+        {coverR2Key
+          ? " Cover saved to cloud and will reload on next visit."
+          : " Upload to cloud to persist across sessions."}
       </div>
     </div>
   );

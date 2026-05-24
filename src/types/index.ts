@@ -72,8 +72,9 @@ export type AccountTier = "free" | "paid";
 export interface EditorState {
   // Book
   bookSize: BookSize;
-  coverImageUrl: string | null;
+  coverImageUrl: string | null;   // local blob URL or R2 signed read URL
   coverImageFile: File | null;
+  coverR2Key: string | null;      // R2 object key — null until uploaded
   spineTitle: string;
 
   // Background

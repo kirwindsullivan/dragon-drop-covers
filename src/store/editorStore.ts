@@ -54,7 +54,8 @@ export const MOOD_PRESETS: MoodPreset[] = [
 
 interface Actions {
   setBookSize: (size: BookSize) => void;
-  setCoverImage: (url: string | null, file: File | null) => void;
+  setCoverImage: (url: string | null, file: File | null, r2Key?: string | null) => void;
+  setCoverR2Key: (key: string | null) => void;
   setSpineTitle: (title: string) => void;
   setBackground: (bg: BackgroundPreset) => void;
   setLighting: (l: Partial<LightingState>) => void;
@@ -73,6 +74,7 @@ const initialState: EditorState = {
   bookSize: "hardcover",
   coverImageUrl: null,
   coverImageFile: null,
+  coverR2Key: null,
   spineTitle: "",
   background: DEFAULT_BACKGROUND,
   lighting: DEFAULT_LIGHTING,
@@ -92,7 +94,9 @@ export const useEditorStore = create<EditorState & Actions>()((set) => ({
   ...initialState,
 
   setBookSize: (bookSize) => set({ bookSize }),
-  setCoverImage: (coverImageUrl, coverImageFile) => set({ coverImageUrl, coverImageFile }),
+  setCoverImage: (coverImageUrl, coverImageFile, r2Key) =>
+    set({ coverImageUrl, coverImageFile, coverR2Key: r2Key ?? null }),
+  setCoverR2Key: (coverR2Key) => set({ coverR2Key }),
   setSpineTitle: (spineTitle) => set({ spineTitle }),
   setBackground: (background) => set({ background }),
 

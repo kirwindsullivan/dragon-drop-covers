@@ -79,12 +79,42 @@ export function ExportPanel({ onExport }: ExportPanelProps) {
         finalBlob = await convertToWebP(finalBlob);
       }
 
-      const url = URL.createObjectURL(finalBlob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `dragon-drop-${selectedPreset.id}.${exportFormat}`;
-      a.click();
-      URL.revokeObjectURL(url);
+      // ── Upload to R2 and download via signed URL ────────────────────────
+      try {
+        // Step 1: get presigned URLs
+        const res = await fetch("/api/upload/export", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ presetId: selectedPreset.id, format: exportFormat }),
+        });
+        if (!res.ok) throw new Error(`API ${res.status}`);
+        const { uploadUrl, downloadUrl } = await res.json() as {
+          uploadUrl: string;
+          downloadUrl: string;
+        };
+
+        // Step 2: PUT blob directly to R2
+        await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": finalBlob.type },
+          body: finalBlob,
+        });
+
+        // Step 3: trigger download from signed R2 URL
+        const a = document.createElement("a");
+        a.href = downloadUrl;
+        a.download = `dragon-drop-${selectedPreset.id}.${exportFormat}`;
+        a.click();
+      } catch (r2Err) {
+        // R2 not configured yet — fall back to local download
+        console.warn("R2 export upload failed, using local download:", r2Err);
+        const url = URL.createObjectURL(finalBlob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `dragon-drop-${selectedPreset.id}.${exportFormat}`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
     } finally {
       setExporting(false);
     }
