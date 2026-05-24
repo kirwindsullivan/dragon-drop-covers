@@ -11,6 +11,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.782.0",
     "@aws-sdk/s3-request-presigner": "^3.782.0",
+    "@clerk/nextjs": "^7.4.1",
     "@react-three/drei": "^10.0.0",
     "@react-three/fiber": "^9.1.2",
     "@react-three/postprocessing": "^3.0.3",

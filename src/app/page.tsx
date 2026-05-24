@@ -56,13 +56,15 @@ export default function HomePage() {
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-2">
           <Link
-            href="/editor"
+            href="/sign-up"
             className="group flex items-center gap-2 rounded-xl bg-brand-600 hover:bg-brand-500 px-8 py-3.5 font-semibold text-white shadow-[0_0_30px_rgba(168,85,247,0.4)] transition-all hover:shadow-[0_0_40px_rgba(168,85,247,0.6)]"
           >
-            Open Editor
+            Start for free
             <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
           </Link>
-          <p className="text-sm text-brand-300/50">No account needed to start</p>
+          <Link href="/sign-in" className="text-sm text-brand-300/50 hover:text-brand-300 transition-colors">
+            Already have an account? Sign in
+          </Link>
         </div>
 
         {/* Feature pills */}

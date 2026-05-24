@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef, useCallback, Suspense } from "react";
+import { useRef, useCallback, Suspense, useEffect } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronLeft, Flame } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
 import { SidePanel } from "@/components/editor/SidePanel";
+import { UserMenu } from "@/components/auth/UserMenu";
 import { bgToCss } from "@/lib/utils";
 import type { ExportMode } from "@/types";
 import type { BookSceneHandle } from "@/components/editor/BookScene";
@@ -31,6 +32,12 @@ export default function EditorPage() {
   const background = useEditorStore((s) => s.background);
   const sceneHandleRef = useRef<BookSceneHandle | null>(null);
 
+  // On first load, ensure new users get their default "free" tier persisted
+  // in Clerk's publicMetadata (fire-and-forget; the UI defaults to "free" anyway)
+  useEffect(() => {
+    fetch("/api/set-default-tier", { method: "POST" }).catch(() => {});
+  }, []);
+
   const handleSceneReady = useCallback((handle: BookSceneHandle) => {
     sceneHandleRef.current = handle;
   }, []);
@@ -40,7 +47,7 @@ export default function EditorPage() {
   }, []);
 
   const handleExport = useCallback(
-    async (width: number, height: number, mode: ExportMode): Promise<Blob | null> => {
+    async (width: number, height: number, _mode: ExportMode): Promise<Blob | null> => {
       if (!sceneHandleRef.current) return null;
       return sceneHandleRef.current.captureFrame(width, height);
     },
@@ -73,8 +80,9 @@ export default function EditorPage() {
             </span>
           </div>
 
-          <div className="pointer-events-auto rounded-full border border-brand-700/50 bg-black/30 px-3 py-1 text-xs text-brand-300 backdrop-blur-sm">
-            Free
+          {/* User menu — replaces the static "Free" badge */}
+          <div className="pointer-events-auto">
+            <UserMenu />
           </div>
         </div>
 
