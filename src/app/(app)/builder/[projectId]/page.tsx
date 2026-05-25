@@ -51,12 +51,12 @@ export default function BuilderPage() {
 
   // Load project metadata and hydrate editor store
   useEffect(() => {
-    fetch(`/api/projects/${projectId}`)
-      .then((r) => {
+    async function load() {
+      try {
+        const r = await fetch(`/api/projects/${projectId}`);
         if (!r.ok) throw new Error(`${r.status}`);
-        return r.json();
-      })
-      .then((meta: ProjectMeta) => {
+        const meta: ProjectMeta = await r.json();
+
         setProject(meta);
 
         // Hydrate editor store from saved settings
@@ -83,15 +83,31 @@ export default function BuilderPage() {
         }
 
         if (meta.coverSignedUrl) {
-          setCoverImage(meta.coverSignedUrl, null, meta.coverKey);
+          // Pre-fetch as blob so Three.js gets a same-origin blob URL.
+          // Signed R2 URLs are cross-origin and fail silently as WebGL textures,
+          // which is why the dropzone thumbnail showed but the 3D model stayed blank.
+          try {
+            const resp = await fetch(meta.coverSignedUrl);
+            if (resp.ok) {
+              const blob = await resp.blob();
+              const blobUrl = URL.createObjectURL(blob);
+              setCoverImage(blobUrl, null, meta.coverKey);
+            } else {
+              // Fall back — at least the dropzone thumbnail will show
+              setCoverImage(meta.coverSignedUrl, null, meta.coverKey);
+            }
+          } catch {
+            setCoverImage(meta.coverSignedUrl, null, meta.coverKey);
+          }
         }
 
         setLoading(false);
-      })
-      .catch((e: Error) => {
-        setError(e.message);
+      } catch (e) {
+        setError((e as Error).message);
         setLoading(false);
-      });
+      }
+    }
+    void load();
   }, [projectId, setCoverImage, setBackground, setLighting, setPhoto, setBookSize, setTextOverlay]);
 
   // 5-second debounced auto-save
