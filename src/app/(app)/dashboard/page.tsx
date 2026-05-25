@@ -2,12 +2,20 @@ import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { ChevronLeft, Flame, Zap, Shield } from "lucide-react";
+import { ChevronLeft, Flame, Zap, Shield, CheckCircle2 } from "lucide-react";
 import { getTierFromUser, TIER_LIMITS } from "@/lib/tier";
+import { UpgradeButton, ManageButton } from "@/components/billing/BillingButtons";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ upgraded?: string }>;
+}) {
   const user = await currentUser();
   if (!user) redirect("/sign-in");
+
+  const { upgraded } = await searchParams;
+  const justUpgraded = upgraded === "true";
 
   const tier = getTierFromUser(user);
   const limits = TIER_LIMITS[tier];
@@ -47,6 +55,21 @@ export default async function DashboardPage() {
             </span>
           </div>
         </div>
+
+        {/* Upgrade success banner */}
+        {justUpgraded && (
+          <div className="flex items-center gap-3 rounded-2xl border border-green-500/30 bg-green-950/40 p-4">
+            <CheckCircle2 className="h-5 w-5 text-green-400 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-green-300">
+                Welcome to Pro!
+              </p>
+              <p className="text-xs text-green-400/70">
+                4K exports, no watermarks, and unlimited storage are now unlocked.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Profile card */}
         <div className="rounded-2xl border border-white/10 bg-black/30 p-5 flex items-center gap-4">
@@ -126,22 +149,23 @@ export default async function DashboardPage() {
             ))}
           </div>
 
-          {/* Upgrade CTA (Free only) */}
+          {/* Free → Upgrade CTA */}
           {tier === "free" && (
             <div className="pt-2 border-t border-white/10 space-y-3">
               <p className="text-sm text-brand-300/60">
-                Unlock 4K exports, no watermarks, and unlimited storage with
-                Pro.
+                Unlock 4K exports, no watermarks, and unlimited storage with Pro.
               </p>
-              <button
-                disabled
-                className="w-full rounded-xl border border-brand-700/50 bg-brand-900/40 py-3 text-sm font-semibold text-brand-300/50 cursor-not-allowed"
-              >
-                Upgrade to Pro — Coming Soon
-              </button>
-              <p className="text-center text-xs text-brand-300/30">
-                Stripe integration coming in the next release
+              <UpgradeButton />
+            </div>
+          )}
+
+          {/* Pro → Manage subscription */}
+          {tier === "pro" && (
+            <div className="pt-2 border-t border-white/10 space-y-3">
+              <p className="text-sm text-brand-300/60">
+                You&apos;re on Pro. Manage billing, update your card, or cancel anytime.
               </p>
+              <ManageButton />
             </div>
           )}
         </div>

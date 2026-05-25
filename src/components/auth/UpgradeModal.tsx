@@ -1,7 +1,7 @@
 "use client";
 
+import { useState } from "react";
 import { X, Zap, Lock } from "lucide-react";
-import Link from "next/link";
 
 interface UpgradeModalProps {
   presetName: string;
@@ -15,6 +15,20 @@ const PRO_BENEFITS = [
 ];
 
 export function UpgradeModal({ presetName, onClose }: UpgradeModalProps) {
+  const [loading, setLoading] = useState(false);
+
+  const handleUpgrade = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/stripe/checkout", { method: "POST" });
+      const { url } = await res.json() as { url?: string };
+      if (url) window.location.href = url;
+      else setLoading(false);
+    } catch {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
@@ -56,13 +70,18 @@ export function UpgradeModal({ presetName, onClose }: UpgradeModalProps) {
         </ul>
 
         {/* CTA */}
-        <Link
-          href="/dashboard"
-          onClick={onClose}
-          className="block w-full rounded-xl bg-brand-600 hover:bg-brand-500 py-3 text-center text-sm font-semibold text-white shadow-[0_0_20px_rgba(168,85,247,0.4)] transition-all"
+        <button
+          onClick={handleUpgrade}
+          disabled={loading}
+          className="flex items-center justify-center gap-2 w-full rounded-xl bg-brand-600 hover:bg-brand-500 py-3 text-center text-sm font-semibold text-white shadow-[0_0_20px_rgba(168,85,247,0.4)] transition-all disabled:opacity-70 disabled:cursor-not-allowed"
         >
-          Upgrade to Pro
-        </Link>
+          {loading ? (
+            <span className="inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+          ) : (
+            <Zap className="h-4 w-4" />
+          )}
+          {loading ? "Redirecting…" : "Upgrade to Pro"}
+        </button>
         <button
           onClick={onClose}
           className="mt-2 block w-full py-2 text-center text-xs text-brand-300/40 hover:text-brand-300 transition-colors"
