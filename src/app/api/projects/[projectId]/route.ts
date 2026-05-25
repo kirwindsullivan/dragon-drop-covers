@@ -40,7 +40,9 @@ async function maybeRefreshUrl(meta: ProjectMeta): Promise<ProjectMeta> {
   if (!meta.coverKey || !meta.signedUrlExpiry) return meta;
 
   const expiryMs = new Date(meta.signedUrlExpiry).getTime();
-  if (Date.now() - expiryMs < ONE_HOUR_MS) return meta;
+  // Refresh if URL expires within the next hour (or has already expired).
+  // expiryMs - Date.now() > ONE_HOUR_MS means "more than 1h remaining" → skip refresh.
+  if (expiryMs - Date.now() > ONE_HOUR_MS) return meta;
 
   try {
     const coverSignedUrl = await presignedGetUrl(meta.coverKey);

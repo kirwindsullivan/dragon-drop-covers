@@ -93,22 +93,19 @@ export default function BuilderPage() {
           });
         }
 
-        if (meta.coverSignedUrl) {
-          // Pre-fetch as blob so Three.js gets a same-origin blob URL.
-          // Signed R2 URLs are cross-origin and fail silently as WebGL textures,
-          // which is why the dropzone thumbnail showed but the 3D model stayed blank.
+        if (meta.coverKey) {
+          // Fetch the cover through our own API route — this proxies it server-side
+          // so the browser receives it from the same origin as a blob, bypassing R2
+          // CORS restrictions that prevent Three.js loading it as a WebGL texture.
           try {
-            const resp = await fetch(meta.coverSignedUrl);
+            const resp = await fetch(`/api/projects/${projectId}/cover`);
             if (resp.ok) {
               const blob = await resp.blob();
-              const blobUrl = URL.createObjectURL(blob);
-              setCoverImage(blobUrl, null, meta.coverKey);
-            } else {
-              // Fall back — at least the dropzone thumbnail will show
-              setCoverImage(meta.coverSignedUrl, null, meta.coverKey);
+              setCoverImage(URL.createObjectURL(blob), null, meta.coverKey);
             }
+            // If the request fails, leave cover null — model renders without texture
           } catch {
-            setCoverImage(meta.coverSignedUrl, null, meta.coverKey);
+            // Network error — model renders without texture
           }
         }
 

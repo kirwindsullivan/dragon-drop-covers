@@ -100,6 +100,24 @@ export async function presignedGetUrl(
 
 // ── Direct server-side operations ─────────────────────────────────────────────
 
+/**
+ * Download a raw object from R2 and return its bytes + content-type.
+ * Used by API routes that proxy images to the browser (avoids cross-origin
+ * restrictions that prevent Three.js from loading them as WebGL textures).
+ */
+export async function getObjectBytes(
+  key: string,
+): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  try {
+    const res = await r2().send(new GetObjectCommand({ Bucket: bucket(), Key: key }));
+    const bytes = await res.Body?.transformToByteArray();
+    if (!bytes) return null;
+    return { bytes, contentType: res.ContentType ?? "image/octet-stream" };
+  } catch {
+    return null;
+  }
+}
+
 export async function deleteObject(key: string): Promise<void> {
   await r2().send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }));
 }

@@ -71,6 +71,9 @@ function ProceduralBook({
             backTex.colorSpace = THREE.SRGBColorSpace;
             build();
           };
+          // If the secondary image load fails (e.g. CORS or revoked URL), still
+          // render the book with the cover texture — just without spine/back styling.
+          img.onerror = () => build();
           img.src = coverUrl;
         },
         undefined,

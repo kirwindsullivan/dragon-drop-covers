@@ -1,13 +1,44 @@
-// POST /api/projects/[projectId]/cover
-// Issues a presigned PUT URL for uploading/replacing the project cover image.
-// Deletes any existing cover object from R2 before generating a new key.
+// GET  /api/projects/[projectId]/cover — proxy cover image to browser (same-origin, no CORS)
+// POST /api/projects/[projectId]/cover — issue presigned PUT URL for uploading/replacing cover.
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { getProjectMeta, putProjectMeta, presignedGetUrl, deleteObject } from "@/lib/projects/r2";
-import { presignedPutUrl } from "@/lib/r2/client";
+import { presignedPutUrl, getObjectBytes } from "@/lib/r2/client";
 
 type RouteContext = { params: Promise<{ projectId: string }> };
+
+// ── GET ───────────────────────────────────────────────────────────────────────
+// Proxies the cover image through our server so the browser receives it from
+// the same origin. This avoids R2 cross-origin restrictions that prevent
+// Three.js from loading the image as a WebGL texture.
+
+export async function GET(_req: NextRequest, ctx: RouteContext) {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { projectId } = await ctx.params;
+
+  const meta = await getProjectMeta(userId, projectId);
+  if (!meta) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (meta.clerkUserId !== userId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!meta.coverKey) return NextResponse.json({ error: "No cover" }, { status: 404 });
+
+  const cover = await getObjectBytes(meta.coverKey);
+  if (!cover) return NextResponse.json({ error: "Cover not found in storage" }, { status: 404 });
+
+  return new NextResponse(Buffer.from(cover.bytes), {
+    headers: {
+      "Content-Type": cover.contentType,
+      // Private cache: browser can reuse for 1 h but must revalidate after
+      "Cache-Control": "private, max-age=3600",
+    },
+  });
+}
+
+// ── POST ──────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest, ctx: RouteContext) {
   const { userId } = await auth();
