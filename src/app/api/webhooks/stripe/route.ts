@@ -52,13 +52,35 @@ export async function POST(req: NextRequest) {
   try {
     switch (event.type) {
       // ── Checkout completed ──────────────────────────────────────────────────
+      // [Session 4] Only handle subscription checkouts here (mode === "subscription").
+      // One-time Project Pass purchases are handled via payment_intent.succeeded below.
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
         const clerkUserId = session.metadata?.clerkUserId;
-        if (clerkUserId && session.payment_status === "paid") {
+        if (clerkUserId && session.mode === "subscription" && session.payment_status === "paid") {
           await setUserTier(clerkUserId, "pro", {
             stripeCustomerId: session.customer as string,
             stripeSubscriptionId: session.subscription as string,
+          });
+        }
+        break;
+      }
+
+      // ── Project Pass one-time payment ───────────────────────────────────────
+      // [Session 4] Increment projectCredits by 1 when a Project Pass is purchased.
+      case "payment_intent.succeeded": {
+        const pi = event.data.object as Stripe.PaymentIntent;
+        const clerkUserId = pi.metadata?.clerkUserId;
+        const type = pi.metadata?.type;
+        if (clerkUserId && type === "project_pass") {
+          const clerk = await clerkClient();
+          const user = await clerk.users.getUser(clerkUserId);
+          const currentCredits = (user.publicMetadata?.projectCredits as number | undefined) ?? 0;
+          await clerk.users.updateUserMetadata(clerkUserId, {
+            publicMetadata: {
+              ...user.publicMetadata,
+              projectCredits: currentCredits + 1,
+            },
           });
         }
         break;

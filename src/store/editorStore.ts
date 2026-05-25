@@ -68,6 +68,9 @@ interface Actions {
   setCustomDimensions: (w: number, h: number) => void;
   setAutoRotate: (v: boolean) => void;
   setActivePanel: (panel: EditorState["activePanel"]) => void;
+  // [Session 4] Project context actions
+  setProjectId: (id: string | null) => void;
+  setProjectTier: (tier: "free" | "project_pass" | "pro" | null) => void;
 }
 
 const initialState: EditorState = {
@@ -88,6 +91,9 @@ const initialState: EditorState = {
   autoRotate: false,
   activePanel: "cover",
   tier: "free",
+  // [Session 4] Project context
+  projectId: null,
+  projectTier: null,
 };
 
 export const useEditorStore = create<EditorState & Actions>()((set) => ({
@@ -126,4 +132,7 @@ export const useEditorStore = create<EditorState & Actions>()((set) => ({
   setCustomDimensions: (customWidth, customHeight) => set({ customWidth, customHeight }),
   setAutoRotate: (autoRotate) => set({ autoRotate }),
   setActivePanel: (activePanel) => set({ activePanel }),
+  // [Session 4] Project context
+  setProjectId: (projectId) => set({ projectId }),
+  setProjectTier: (projectTier) => set({ projectTier }),
 }));

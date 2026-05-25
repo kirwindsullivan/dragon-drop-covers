@@ -4,7 +4,10 @@
  * replace getTierFromMetadata with a Stripe subscription lookup.
  */
 
-export type UserTier = "free" | "pro";
+// [Session 4] Added "project_pass" — a project-level tier for one-time pass purchases.
+// getTierFromUser still only returns "free" | "pro" (user account tier).
+// Project tier is stored separately in the editor store / project meta.
+export type UserTier = "free" | "pro" | "project_pass";
 
 interface WithPublicMetadata {
   publicMetadata?: Record<string, unknown>;
@@ -26,6 +29,12 @@ export const TIER_LIMITS = {
     watermark: true,
     retentionDays: 30,
   },
+  // [Session 4] Project Pass: same resolution as free, no watermark, 90-day retention
+  project_pass: {
+    maxDimension: 1080,
+    watermark: false,
+    retentionDays: 90,
+  },
   pro: {
     maxDimension: 4096,
     watermark: false,
@@ -34,9 +43,10 @@ export const TIER_LIMITS = {
 } as const;
 
 /** Can this tier use a given export preset? */
+// [Session 4] project_pass unlocks all presets (same as pro)
 export function canUsePreset(tier: UserTier, isPaid: boolean): boolean {
   if (!isPaid) return true;
-  return tier === "pro";
+  return tier === "pro" || tier === "project_pass";
 }
 
 /** Cap export dimensions to tier limit */

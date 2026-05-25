@@ -2,20 +2,27 @@ import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { ChevronLeft, Flame, Zap, Shield, CheckCircle2 } from "lucide-react";
+import { ChevronLeft, Flame, Zap, Shield, CheckCircle2, Ticket } from "lucide-react";
 import { getTierFromUser, TIER_LIMITS } from "@/lib/tier";
 import { UpgradeButton, ManageButton } from "@/components/billing/BillingButtons";
+// [Session 4] Projects section — client component (fetches project list on mount)
+import { ProjectsSection } from "@/components/projects/ProjectsSection";
 
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ upgraded?: string }>;
+  searchParams: Promise<{ upgraded?: string; pass_purchased?: string }>;
 }) {
   const user = await currentUser();
   if (!user) redirect("/sign-in");
 
-  const { upgraded } = await searchParams;
+  const { upgraded, pass_purchased } = await searchParams;
   const justUpgraded = upgraded === "true";
+  // [Session 4] Show banner when user returns from Project Pass checkout
+  const passPurchased = pass_purchased === "true";
+
+  // [Session 4] Read project credits from Clerk metadata
+  const projectCredits = (user.publicMetadata?.projectCredits as number | undefined) ?? 0;
 
   const tier = getTierFromUser(user);
   const limits = TIER_LIMITS[tier];
@@ -138,7 +145,8 @@ export default async function DashboardPage({
                     ? "Forever"
                     : `${limits.retentionDays} days`,
               },
-            ].map(({ label, value }) => (
+            // [Session 4] Show project credit balance for non-Pro users
+            ].concat(tier !== "pro" ? [{ label: "Pass credits", value: String(projectCredits) }] : []).map(({ label, value }) => (
               <div
                 key={label}
                 className="rounded-xl border border-white/5 bg-surface-1/60 p-3 text-center"
@@ -169,6 +177,8 @@ export default async function DashboardPage({
             </div>
           )}
         </div>
+        {/* [Session 4] Projects list */}
+        <ProjectsSection passPurchased={passPurchased} />
       </div>
     </div>
   );

@@ -41,6 +41,8 @@ export function CoverDropzone() {
   const bookSize      = useEditorStore((s) => s.bookSize);
   const setSpineTitle = useEditorStore((s) => s.setSpineTitle);
   const spineTitle    = useEditorStore((s) => s.spineTitle);
+  // [Session 4] When projectId is set we route uploads through the project cover API
+  const projectId     = useEditorStore((s) => s.projectId);
 
   const [isDragOver, setIsDragOver]   = useState(false);
   const [uploadPct, setUploadPct]     = useState<number | null>(null); // null = idle
@@ -82,8 +84,12 @@ export function CoverDropzone() {
       // Start upload
       setUploadPct(0);
       try {
-        // Step 1: get presigned URLs from our API
-        const res = await fetch("/api/upload/cover", {
+        // Step 1: get presigned URLs — use project cover route when in builder context
+        // [Session 4] Routes through /api/projects/[id]/cover which enforces 1-cover-per-project
+        const coverApiUrl = projectId
+          ? `/api/projects/${projectId}/cover`
+          : "/api/upload/cover";
+        const res = await fetch(coverApiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -126,12 +132,21 @@ export function CoverDropzone() {
       localStorage.removeItem(LS_KEY);
 
       if (key) {
-        // Fire-and-forget delete from R2
-        fetch("/api/upload/cover", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ key }),
-        }).catch(console.error);
+        if (projectId) {
+          // [Session 4] In project context: PATCH clears the cover from meta.json + R2
+          fetch(`/api/projects/${projectId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ clearCover: true }),
+          }).catch(console.error);
+        } else {
+          // Standalone editor: fire-and-forget delete from R2
+          fetch("/api/upload/cover", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key }),
+          }).catch(console.error);
+        }
       }
     },
     [coverR2Key, setCoverImage],

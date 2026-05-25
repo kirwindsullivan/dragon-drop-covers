@@ -104,4 +104,8 @@ export interface EditorState {
 
   // Account
   tier: AccountTier;
+
+  // [Session 4] Project context — null when using standalone /editor
+  projectId: string | null;
+  projectTier: "free" | "project_pass" | "pro" | null;
 }

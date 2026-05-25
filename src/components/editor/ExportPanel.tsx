@@ -5,7 +5,8 @@ import { Download, Lock, ChevronDown, ChevronUp } from "lucide-react";
 import { useUser } from "@clerk/nextjs";
 import { useEditorStore } from "@/store/editorStore";
 import { EXPORT_PRESETS, WATERMARK_TEXT } from "@/lib/constants";
-import { getTierFromUser, canUsePreset, capDimensions } from "@/lib/tier";
+import { getTierFromUser, canUsePreset, capDimensions, TIER_LIMITS } from "@/lib/tier";
+import type { UserTier } from "@/lib/tier";
 import { UpgradeModal } from "@/components/auth/UpgradeModal";
 import { cn } from "@/lib/utils";
 import type { ExportMode, ExportFormat } from "@/types";
@@ -15,9 +16,12 @@ interface ExportPanelProps {
 }
 
 export function ExportPanel({ onExport }: ExportPanelProps) {
-  // ── Tier from Clerk (single source of truth) ──────────────────────────
+  // ── Tier resolution ───────────────────────────────────────────────────
+  // [Session 4] In builder context, project tier overrides user account tier.
+  // This lets project_pass projects use all presets without a Pro subscription.
   const { user } = useUser();
-  const tier = getTierFromUser(user);
+  const projectTier = useEditorStore((s) => s.projectTier);
+  const tier: UserTier = projectTier ?? getTierFromUser(user);
 
   // ── Editor state ──────────────────────────────────────────────────────
   const exportMode    = useEditorStore((s) => s.exportMode);
@@ -64,8 +68,9 @@ export function ExportPanel({ onExport }: ExportPanelProps) {
 
       let finalBlob = blob;
 
-      // Watermark for free tier
-      if (tier === "free") {
+      // Watermark — driven by tier limits (free: yes; project_pass + pro: no)
+      // [Session 4] Use TIER_LIMITS so project_pass exports are watermark-free
+      if (TIER_LIMITS[tier].watermark) {
         finalBlob = await addWatermark(finalBlob, w, h);
       }
 
