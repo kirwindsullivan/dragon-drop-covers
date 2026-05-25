@@ -101,9 +101,10 @@ export function CoverDropzone() {
         // Step 2: upload directly to R2
         await uploadToR2(uploadUrl, file, setUploadPct);
 
-        // Step 3: swap local blob URL → signed R2 read URL
-        URL.revokeObjectURL(localUrl);
-        setCoverImage(readUrl, file, key);
+        // Step 3: store R2 key — keep blob URL active for the 3D viewer this session.
+        // (On next session load we restore from the signed R2 URL; no cross-origin
+        //  texture reload needed mid-session.)
+        setCoverR2Key(key);
         localStorage.setItem(LS_KEY, key);
       } catch (err) {
         console.error("Cover upload failed:", err);
