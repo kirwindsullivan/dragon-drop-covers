@@ -183,11 +183,31 @@ function CameraController({
   return null;
 }
 
-// ─── Export crop helper ───────────────────────────────────────────────────────
+// ─── Export helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Convert a base64 data URL produced by canvas.toDataURL() into a Blob.
+ * This is synchronous — no async/await — so it runs in the same JS tick as
+ * the WebGL render, guaranteeing we capture the buffer before r3f's RAF loop
+ * can fire and overwrite it.
+ */
+function dataUrlToBlob(dataUrl: string): Blob | null {
+  try {
+    const [header, base64] = dataUrl.split(",");
+    const mime = header.match(/:(.*?);/)?.[1] ?? "image/png";
+    const bstr = atob(base64);
+    const u8 = new Uint8Array(bstr.length);
+    for (let i = 0; i < bstr.length; i++) u8[i] = bstr.charCodeAt(i);
+    return new Blob([u8], { type: mime });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Center-crop a PNG blob from (srcW × srcH) to (dstW × dstH).
- * Uses a 2-D canvas drawImage call so there is no pixel resampling —
- * the source and destination coordinates are identical in size.
+ * sx/sy are rounded to integers so drawImage never applies bilinear
+ * interpolation at sub-pixel offsets, which would cause blur.
  */
 function cropCenter(
   blob: Blob,
@@ -203,8 +223,9 @@ function cropCenter(
       canvas.height = dstH;
       const ctx = canvas.getContext("2d");
       if (!ctx) { URL.revokeObjectURL(url); resolve(blob); return; }
-      const sx = (srcW - dstW) / 2;
-      const sy = (srcH - dstH) / 2;
+      // Integer source coordinates — avoids bilinear interpolation blur
+      const sx = Math.round((srcW - dstW) / 2);
+      const sy = Math.round((srcH - dstH) / 2);
       ctx.drawImage(img, sx, sy, dstW, dstH, 0, 0, dstW, dstH);
       URL.revokeObjectURL(url);
       canvas.toBlob((b) => resolve(b), "image/png");
@@ -269,16 +290,21 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
     renderer.setSize(renderW, renderH, false);
     renderer.render(scene, cam);
 
-    const rawBlob = await new Promise<Blob | null>((res) =>
-      renderer.domElement.toBlob(res, "image/png"),
-    );
+    // Capture SYNCHRONOUSLY via toDataURL — toBlob is async and React Three
+    // Fiber's requestAnimationFrame loop can fire between the render call and
+    // the toBlob callback, resizing the canvas and overwriting the buffer.
+    // toDataURL captures the current buffer immediately in the same JS tick.
+    const dataUrl = renderer.domElement.toDataURL("image/png");
 
-    // Restore renderer (cam.aspect was never touched)
+    // Restore renderer immediately so r3f's next frame renders correctly
     renderer.setPixelRatio(prevPixelRatio);
     renderer.setSize(prevSize.x, prevSize.y, false);
 
+    // Convert data URL → Blob (synchronous decode, no renderer involvement)
+    const rawBlob = dataUrlToBlob(dataUrl);
     if (!rawBlob) return null;
-    // If dimensions already match (same aspect) skip the crop step
+
+    // If dimensions already match (same aspect, no crop needed) return as-is
     if (renderW === width && renderH === height) return rawBlob;
 
     // Center-crop to exactly (width × height) — pixel-perfect, no scaling
