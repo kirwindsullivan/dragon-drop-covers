@@ -87,7 +87,12 @@ export function SafeZoneOverlay() {
     // ── Calculate the export frame rectangle ──────────────────────────────
     // Largest rectangle with the preset's aspect ratio that fits in the
     // container with a little breathing room around the edges.
-    const PADDING = 0.88; // use 88% of each container axis
+    // PADDING = 1.0 — the border marks the EXACT export crop boundary.
+    // captureFrame renders at the preview's aspect ratio and center-crops to
+    // the preset dimensions, so this rectangle is pixel-accurate.
+    // The dark vignette on any letterbox bars makes it clear those areas
+    // are outside the export.
+    const PADDING = 1.0;
     const presetRatio = preset.width / preset.height;
     const containerRatio = cw / ch;
 

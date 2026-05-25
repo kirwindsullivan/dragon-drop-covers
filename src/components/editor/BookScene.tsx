@@ -182,6 +182,37 @@ function CameraController({
   return null;
 }
 
+// ─── Export crop helper ───────────────────────────────────────────────────────
+/**
+ * Center-crop a PNG blob from (srcW × srcH) to (dstW × dstH).
+ * Uses a 2-D canvas drawImage call so there is no pixel resampling —
+ * the source and destination coordinates are identical in size.
+ */
+function cropCenter(
+  blob: Blob,
+  srcW: number, srcH: number,
+  dstW: number, dstH: number,
+): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width  = dstW;
+      canvas.height = dstH;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { URL.revokeObjectURL(url); resolve(blob); return; }
+      const sx = (srcW - dstW) / 2;
+      const sy = (srcH - dstH) / 2;
+      ctx.drawImage(img, sx, sy, dstW, dstH, 0, 0, dstW, dstH);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((b) => resolve(b), "image/png");
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(blob); };
+    img.src = url;
+  });
+}
+
 // ─── Main scene export ────────────────────────────────────────────────────────
 export interface BookSceneHandle {
   captureFrame: (width: number, height: number) => Promise<Blob | null>;
@@ -211,27 +242,45 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
 
     // Save current state
     const prevSize = renderer.getSize(new THREE.Vector2());
-    const prevAspect = cam.aspect;
     const prevPixelRatio = renderer.getPixelRatio();
+    if (prevSize.x === 0 || prevSize.y === 0) return null;
 
-    // Render at target resolution
+    // Render at a resolution that PRESERVES the preview camera's aspect ratio so
+    // the export matches exactly what the user sees in the viewport.  We then
+    // center-crop the render down to the preset's target dimensions (1:1 pixels,
+    // no resampling).  cam.aspect is intentionally left unchanged.
+    const previewAspect = prevSize.x / prevSize.y;
+    const targetAspect  = width / height;
+    let renderW: number;
+    let renderH: number;
+    if (previewAspect >= targetAspect) {
+      // Preview is wider than the target → height is the binding constraint
+      renderH = height;
+      renderW = Math.round(height * previewAspect);
+    } else {
+      // Preview is taller than the target → width is the binding constraint
+      renderW = width;
+      renderH = Math.round(width / previewAspect);
+    }
+
     renderer.setPixelRatio(1);
-    renderer.setSize(width, height, false);
-    cam.aspect = width / height;
-    cam.updateProjectionMatrix();
+    renderer.setSize(renderW, renderH, false);
     renderer.render(scene, cam);
 
-    const blob = await new Promise<Blob | null>((res) =>
+    const rawBlob = await new Promise<Blob | null>((res) =>
       renderer.domElement.toBlob(res, "image/png"),
     );
 
-    // Restore
+    // Restore renderer (cam.aspect was never touched)
     renderer.setPixelRatio(prevPixelRatio);
     renderer.setSize(prevSize.x, prevSize.y, false);
-    cam.aspect = prevAspect;
-    cam.updateProjectionMatrix();
 
-    return blob;
+    if (!rawBlob) return null;
+    // If dimensions already match (same aspect) skip the crop step
+    if (renderW === width && renderH === height) return rawBlob;
+
+    // Center-crop to exactly (width × height) — pixel-perfect, no scaling
+    return cropCenter(rawBlob, renderW, renderH, width, height);
   }, []);
 
   useEffect(() => {
