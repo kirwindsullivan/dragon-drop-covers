@@ -7,6 +7,7 @@ import Link from "next/link";
 import { ChevronLeft, Flame } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
 import { SidePanel } from "@/components/editor/SidePanel";
+import { SafeZoneOverlay } from "@/components/editor/SafeZoneOverlay";
 import { UserMenu } from "@/components/auth/UserMenu";
 import { bgToCss } from "@/lib/utils";
 import { useAutoSave } from "@/hooks/useAutoSave";
@@ -205,6 +206,9 @@ export default function BuilderPage() {
         <Suspense fallback={<SceneFallback />}>
           <BookScene onReady={handleSceneReady} />
         </Suspense>
+
+        {/* Safe zone overlay — HTML canvas, never captured by Three.js export */}
+        <SafeZoneOverlay />
       </div>
 
       {/* Side panel */}

@@ -9,6 +9,7 @@ import type {
   ExportMode,
   ExportFormat,
   MoodPreset,
+  ExportHistoryItem, // [Session 5]
 } from "@/types";
 
 const DEFAULT_BACKGROUND: BackgroundPreset = {
@@ -74,6 +75,10 @@ interface Actions {
   /** Reset all editor state to defaults (cover, settings, active panel, etc.)
    *  Called when entering a new or different project so nothing bleeds through. */
   resetEditorState: () => void;
+  // [Session 5] Safe zone overlay
+  setShowRuleOfThirds: (v: boolean) => void;
+  // [Session 5] Export history — keeps last 20 items across projects
+  addExportHistory: (item: ExportHistoryItem) => void;
 }
 
 const initialState: EditorState = {
@@ -97,6 +102,9 @@ const initialState: EditorState = {
   // [Session 4] Project context
   projectId: null,
   projectTier: null,
+  // [Session 5] Safe zone / export history
+  showRuleOfThirds: false,
+  exportHistory: [] as ExportHistoryItem[],
 };
 
 export const useEditorStore = create<EditorState & Actions>()((set) => ({
@@ -139,6 +147,15 @@ export const useEditorStore = create<EditorState & Actions>()((set) => ({
   setProjectId: (projectId) => set({ projectId }),
   setProjectTier: (projectTier) => set({ projectTier }),
 
+  // [Session 5] Safe zone
+  setShowRuleOfThirds: (showRuleOfThirds) => set({ showRuleOfThirds }),
+
+  // [Session 5] Export history — prepend latest, keep 20 max
+  addExportHistory: (item) =>
+    set((s) => ({
+      exportHistory: [item, ...s.exportHistory].slice(0, 20),
+    })),
+
   // Reset all editor state to defaults — does NOT touch projectId / projectTier
   // (those are set separately by the builder page after this reset runs).
   resetEditorState: () =>
@@ -157,7 +174,9 @@ export const useEditorStore = create<EditorState & Actions>()((set) => ({
       exportPresetId: initialState.exportPresetId,
       customWidth:    initialState.customWidth,
       customHeight:   initialState.customHeight,
-      autoRotate:     initialState.autoRotate,
-      activePanel:    initialState.activePanel,   // resets to "cover"
+      autoRotate:          initialState.autoRotate,
+      activePanel:         initialState.activePanel,      // resets to "cover"
+      showRuleOfThirds:    initialState.showRuleOfThirds, // [Session 5]
+      // exportHistory intentionally NOT reset — history persists across projects
     }),
 }));

@@ -69,6 +69,18 @@ export interface ExportPreset {
 
 export type AccountTier = "free" | "paid";
 
+// [Session 5] Export history — one entry per completed export, stored in Zustand.
+// projectId links history to the current project so entries are filtered per project.
+export interface ExportHistoryItem {
+  id: string;
+  presetId: string;
+  presetName: string;
+  format: "png" | "webp";
+  timestamp: number;   // Date.now() at time of export
+  r2Key: string;       // Used to regenerate a fresh signed download URL
+  projectId: string | null;
+}
+
 export interface EditorState {
   // Book
   bookSize: BookSize;
@@ -108,4 +120,9 @@ export interface EditorState {
   // [Session 4] Project context — null when using standalone /editor
   projectId: string | null;
   projectTier: "free" | "project_pass" | "pro" | null;
+
+  // [Session 5] Safe zone overlay
+  showRuleOfThirds: boolean;
+  // [Session 5] Export history — last N exports across all projects
+  exportHistory: ExportHistoryItem[];
 }
