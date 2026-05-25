@@ -2,7 +2,7 @@ import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { ChevronLeft, Flame, Zap, Shield, CheckCircle2, Ticket } from "lucide-react";
+import { ChevronLeft, Flame, Zap, Shield, CheckCircle2, Ticket, Package } from "lucide-react";
 import { getTierFromUser, TIER_LIMITS } from "@/lib/tier";
 import { UpgradeButton, ManageButton } from "@/components/billing/BillingButtons";
 // [Session 4] Projects section — client component (fetches project list on mount)
@@ -78,6 +78,21 @@ export default async function DashboardPage({
           </div>
         )}
 
+        {/* Project Pass credit balance — shown when the user has passes remaining */}
+        {tier !== "pro" && projectCredits > 0 && (
+          <div className="flex items-center gap-3 rounded-2xl border border-amber-500/30 bg-amber-950/30 p-4">
+            <Package className="h-5 w-5 text-amber-400 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-amber-300">
+                {projectCredits} Project {projectCredits === 1 ? "Pass" : "Passes"} remaining
+              </p>
+              <p className="text-xs text-amber-400/70">
+                Each pass unlocks one new project slot with no watermark and all export presets.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Profile card */}
         <div className="rounded-2xl border border-white/10 bg-black/30 p-5 flex items-center gap-4">
           {user.imageUrl ? (
@@ -145,8 +160,8 @@ export default async function DashboardPage({
                     ? "Forever"
                     : `${limits.retentionDays} days`,
               },
-            // [Session 4] Show project credit balance for non-Pro users
-            ].concat(tier !== "pro" ? [{ label: "Pass credits", value: String(projectCredits) }] : []).map(({ label, value }) => (
+            // Show Project Pass credit balance for non-Pro users
+            ].concat(tier !== "pro" ? [{ label: "Project Passes", value: String(projectCredits) }] : []).map(({ label, value }) => (
               <div
                 key={label}
                 className="rounded-xl border border-white/5 bg-surface-1/60 p-3 text-center"

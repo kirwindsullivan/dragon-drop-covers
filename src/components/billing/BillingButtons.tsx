@@ -2,36 +2,30 @@
 
 import { useState } from "react";
 import { Zap, Settings } from "lucide-react";
+import { UpgradeOptionsModal } from "@/components/billing/UpgradeOptionsModal";
 
-// ── Upgrade button — starts Stripe Checkout ───────────────────────────────────
+// ── Upgrade button — opens the two-option upgrade modal ───────────────────────
 export function UpgradeButton() {
-  const [loading, setLoading] = useState(false);
-
-  const handleUpgrade = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/stripe/checkout", { method: "POST" });
-      const { url } = await res.json() as { url?: string };
-      if (url) window.location.href = url;
-      else setLoading(false);
-    } catch {
-      setLoading(false);
-    }
-  };
+  const [showModal, setShowModal] = useState(false);
 
   return (
-    <button
-      onClick={handleUpgrade}
-      disabled={loading}
-      className="w-full flex items-center justify-center gap-2 rounded-xl bg-brand-600 hover:bg-brand-500 py-3 text-sm font-semibold text-white shadow-[0_0_20px_rgba(168,85,247,0.4)] transition-all disabled:opacity-70 disabled:cursor-not-allowed"
-    >
-      {loading ? (
-        <span className="inline-block h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-      ) : (
+    <>
+      <button
+        onClick={() => setShowModal(true)}
+        className="w-full flex items-center justify-center gap-2 rounded-xl bg-brand-600 hover:bg-brand-500 py-3 text-sm font-semibold text-white shadow-[0_0_20px_rgba(168,85,247,0.4)] transition-all"
+      >
         <Zap className="h-4 w-4" />
+        Upgrade to Pro
+      </button>
+
+      {showModal && (
+        <UpgradeOptionsModal
+          onClose={() => setShowModal(false)}
+          heading="Choose your plan"
+          subheading="Unlock the full Dragon Drop Covers experience."
+        />
       )}
-      {loading ? "Redirecting…" : "Upgrade to Pro"}
-    </button>
+    </>
   );
 }
 
