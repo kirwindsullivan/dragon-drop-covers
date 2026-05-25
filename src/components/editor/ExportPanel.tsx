@@ -132,7 +132,20 @@ export function ExportPanel({ onExport }: ExportPanelProps) {
         finalBlob = await convertToWebP(finalBlob);
       }
 
-      // ── Upload to R2 and download via signed URL ──────────────────────
+      // ── Instant local download (blob URL — always same-origin) ──────────
+      // Using a.href = R2SignedUrl fails on cross-origin: browsers ignore the
+      // `download` attribute and navigate to the page instead of saving the file.
+      // We already have the processed blob in memory — download it directly.
+      const localUrl = URL.createObjectURL(finalBlob);
+      const a = document.createElement("a");
+      a.href     = localUrl;
+      a.download = `dragon-drop-${selectedPreset.id}.${exportFormat}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(localUrl), 1000);
+
+      // ── Upload to R2 in background (history + re-download only) ──────────
       try {
         const res = await fetch("/api/upload/export", {
           method: "POST",
@@ -140,9 +153,8 @@ export function ExportPanel({ onExport }: ExportPanelProps) {
           body: JSON.stringify({ presetId: selectedPreset.id, format: exportFormat }),
         });
         if (!res.ok) throw new Error(`API ${res.status}`);
-        const { uploadUrl, downloadUrl, key } = await res.json() as {
+        const { uploadUrl, key } = await res.json() as {
           uploadUrl: string;
-          downloadUrl: string;
           key: string;
         };
 
@@ -152,7 +164,7 @@ export function ExportPanel({ onExport }: ExportPanelProps) {
           body: finalBlob,
         });
 
-        // [Session 5] Record in export history before triggering download
+        // [Session 5] Record in export history
         if (key) {
           addExportHistory({
             id: crypto.randomUUID(),
@@ -164,20 +176,10 @@ export function ExportPanel({ onExport }: ExportPanelProps) {
             projectId,
           });
         }
-
-        const a = document.createElement("a");
-        a.href     = downloadUrl;
-        a.download = `dragon-drop-${selectedPreset.id}.${exportFormat}`;
-        a.click();
       } catch (r2Err) {
-        // R2 not configured — fall back to local download
-        console.warn("R2 export upload failed, using local download:", r2Err);
-        const url = URL.createObjectURL(finalBlob);
-        const a   = document.createElement("a");
-        a.href     = url;
-        a.download = `dragon-drop-${selectedPreset.id}.${exportFormat}`;
-        a.click();
-        URL.revokeObjectURL(url);
+        // R2 not configured or upload failed — download already triggered above,
+        // so this only means the export won't appear in history / re-download.
+        console.warn("R2 history upload failed:", r2Err);
       }
     } finally {
       setExporting(false);

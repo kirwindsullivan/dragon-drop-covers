@@ -174,7 +174,7 @@ export function SafeZoneOverlay() {
         onClick={() => setShowGrid(!showGrid)}
         className={cn(
           "pointer-events-auto absolute bottom-16 right-4",
-          "flex h-8 w-8 items-center justify-center rounded-lg border transition-all",
+          "flex items-center gap-2 rounded-lg border px-3 h-9 transition-all",
           showGrid
             ? "border-brand-500 bg-brand-900/80 text-brand-300"
             : "border-white/20 bg-black/40 text-white/50 hover:border-white/40 hover:text-white/80",
@@ -182,7 +182,8 @@ export function SafeZoneOverlay() {
         title="Toggle rule-of-thirds grid"
         aria-label="Toggle rule-of-thirds grid"
       >
-        <Grid3X3 className="h-4 w-4" />
+        <Grid3X3 className="h-4 w-4 shrink-0" />
+        <span className="text-xs font-medium">Grid</span>
       </button>
     </div>
   );
