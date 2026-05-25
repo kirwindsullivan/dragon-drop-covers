@@ -48,8 +48,10 @@ export function CoverDropzone() {
   const [uploadPct, setUploadPct]     = useState<number | null>(null); // null = idle
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // ── Restore cover from previous session ──────────────────────────────────────
+  // ── Restore cover from previous session (standalone editor only) ─────────────
   useEffect(() => {
+    // In project context the builder page owns cover restoration — skip localStorage.
+    if (projectId) return;
     // Only restore if no cover is loaded yet
     if (coverUrl) return;
     const savedKey = localStorage.getItem(LS_KEY);
@@ -57,11 +59,23 @@ export function CoverDropzone() {
 
     fetch(`/api/upload/signed-url?key=${encodeURIComponent(savedKey)}`)
       .then((r) => r.json())
-      .then(({ readUrl }: { readUrl?: string }) => {
-        if (readUrl) {
-          setCoverImage(readUrl, null, savedKey);
-        } else {
-          localStorage.removeItem(LS_KEY); // key no longer valid
+      .then(async ({ readUrl }: { readUrl?: string }) => {
+        if (!readUrl) {
+          localStorage.removeItem(LS_KEY);
+          return;
+        }
+        // Pre-fetch as blob so Three.js gets a same-origin URL (avoids cross-origin
+        // WebGL texture restriction that makes the model render blank).
+        try {
+          const resp = await fetch(readUrl);
+          if (resp.ok) {
+            const blob = await resp.blob();
+            setCoverImage(URL.createObjectURL(blob), null, savedKey);
+          } else {
+            localStorage.removeItem(LS_KEY);
+          }
+        } catch {
+          localStorage.removeItem(LS_KEY);
         }
       })
       .catch(() => localStorage.removeItem(LS_KEY));
