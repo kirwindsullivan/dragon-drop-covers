@@ -40,14 +40,15 @@ export default function BuilderPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Editor store setters — used to hydrate state from saved project
-  const setCoverImage   = useEditorStore((s) => s.setCoverImage);
-  const setBackground   = useEditorStore((s) => s.setBackground);
-  const setLighting     = useEditorStore((s) => s.setLighting);
-  const setPhoto        = useEditorStore((s) => s.setPhoto);
-  const setBookSize     = useEditorStore((s) => s.setBookSize);
-  const setTextOverlay  = useEditorStore((s) => s.setTextOverlay);
-  const setProjectId    = useEditorStore((s) => s.setProjectId);
-  const setProjectTier  = useEditorStore((s) => s.setProjectTier);
+  const setCoverImage      = useEditorStore((s) => s.setCoverImage);
+  const setBackground      = useEditorStore((s) => s.setBackground);
+  const setLighting        = useEditorStore((s) => s.setLighting);
+  const setPhoto           = useEditorStore((s) => s.setPhoto);
+  const setBookSize        = useEditorStore((s) => s.setBookSize);
+  const setTextOverlay     = useEditorStore((s) => s.setTextOverlay);
+  const setProjectId       = useEditorStore((s) => s.setProjectId);
+  const setProjectTier     = useEditorStore((s) => s.setProjectTier);
+  const resetEditorState   = useEditorStore((s) => s.resetEditorState);
 
   const background = useEditorStore((s) => s.background);
 
@@ -61,14 +62,14 @@ export default function BuilderPage() {
 
         setProject(meta);
 
+        // Reset ALL editor state to defaults before hydrating — this ensures cover,
+        // lighting, active panel, etc. never bleed through from a previous project.
+        resetEditorState();
+
         // Tell the store which project we're in so CoverDropzone, ExportPanel, etc.
         // use the right tier and API route.
         setProjectId(projectId);
         setProjectTier(meta.tier);
-
-        // Clear stale cover from any previous session before hydrating — without this,
-        // navigating to a new (coverless) project would show the last project's cover.
-        setCoverImage(null, null, null);
 
         // Hydrate editor store from saved settings
         setBookSize(meta.bookSize);
@@ -116,17 +117,17 @@ export default function BuilderPage() {
       }
     }
     void load();
-  }, [projectId, setCoverImage, setBackground, setLighting, setPhoto, setBookSize, setTextOverlay, setProjectId, setProjectTier]);
+  }, [projectId, resetEditorState, setCoverImage, setBackground, setLighting, setPhoto, setBookSize, setTextOverlay, setProjectId, setProjectTier]);
 
-  // Clear project context when leaving the builder so the standalone editor
-  // doesn't inherit project tier / ID from a previous visit.
+  // Reset everything when leaving the builder so the standalone editor (and the
+  // next project) start clean.
   useEffect(() => {
     return () => {
+      resetEditorState();
       setProjectId(null);
       setProjectTier(null);
-      setCoverImage(null, null, null);
     };
-  }, [setCoverImage, setProjectId, setProjectTier]);
+  }, [resetEditorState, setProjectId, setProjectTier]);
 
   // 5-second debounced auto-save
   useAutoSave(projectId);

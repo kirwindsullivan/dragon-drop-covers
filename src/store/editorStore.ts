@@ -71,6 +71,9 @@ interface Actions {
   // [Session 4] Project context actions
   setProjectId: (id: string | null) => void;
   setProjectTier: (tier: "free" | "project_pass" | "pro" | null) => void;
+  /** Reset all editor state to defaults (cover, settings, active panel, etc.)
+   *  Called when entering a new or different project so nothing bleeds through. */
+  resetEditorState: () => void;
 }
 
 const initialState: EditorState = {
@@ -135,4 +138,26 @@ export const useEditorStore = create<EditorState & Actions>()((set) => ({
   // [Session 4] Project context
   setProjectId: (projectId) => set({ projectId }),
   setProjectTier: (projectTier) => set({ projectTier }),
+
+  // Reset all editor state to defaults — does NOT touch projectId / projectTier
+  // (those are set separately by the builder page after this reset runs).
+  resetEditorState: () =>
+    set({
+      bookSize:       initialState.bookSize,
+      coverImageUrl:  initialState.coverImageUrl,
+      coverImageFile: initialState.coverImageFile,
+      coverR2Key:     initialState.coverR2Key,
+      spineTitle:     initialState.spineTitle,
+      background:     initialState.background,
+      lighting:       initialState.lighting,
+      photo:          initialState.photo,
+      textOverlay:    initialState.textOverlay,
+      exportMode:     initialState.exportMode,
+      exportFormat:   initialState.exportFormat,
+      exportPresetId: initialState.exportPresetId,
+      customWidth:    initialState.customWidth,
+      customHeight:   initialState.customHeight,
+      autoRotate:     initialState.autoRotate,
+      activePanel:    initialState.activePanel,   // resets to "cover"
+    }),
 }));
