@@ -16,7 +16,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Grid3X3 } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
-import { EXPORT_PRESETS } from "@/lib/constants";
+import { EXPORT_PRESETS, SAFE_ZONE_PADDING } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -87,12 +87,10 @@ export function SafeZoneOverlay() {
     // ── Calculate the export frame rectangle ──────────────────────────────
     // Largest rectangle with the preset's aspect ratio that fits in the
     // container with a little breathing room around the edges.
-    // PADDING = 1.0 — the border marks the EXACT export crop boundary.
-    // captureFrame renders at the preview's aspect ratio and center-crops to
-    // the preset dimensions, so this rectangle is pixel-accurate.
-    // The dark vignette on any letterbox bars makes it clear those areas
-    // are outside the export.
-    const PADDING = 1.0;
+    // PADDING — shared with BookScene.captureFrame via SAFE_ZONE_PADDING in
+    // constants.ts.  captureFrame renders at 1/PADDING scale then center-crops
+    // to the preset dimensions, so the exported pixels exactly match this frame.
+    const PADDING = SAFE_ZONE_PADDING;
     const presetRatio = preset.width / preset.height;
     const containerRatio = cw / ch;
 

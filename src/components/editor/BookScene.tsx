@@ -19,6 +19,7 @@ import {
   generateSpineTexture,
   generateBackTexture,
 } from "@/lib/three/spineGenerator";
+import { SAFE_ZONE_PADDING } from "@/lib/constants";
 import type { BookSize } from "@/types";
 
 // ─── GLB model paths — drop a .glb here and it auto-maps ─────────────────────
@@ -245,22 +246,23 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
     const prevPixelRatio = renderer.getPixelRatio();
     if (prevSize.x === 0 || prevSize.y === 0) return null;
 
-    // Render at a resolution that PRESERVES the preview camera's aspect ratio so
-    // the export matches exactly what the user sees in the viewport.  We then
-    // center-crop the render down to the preset's target dimensions (1:1 pixels,
-    // no resampling).  cam.aspect is intentionally left unchanged.
+    // Render at (1 / SAFE_ZONE_PADDING) × the target dimensions, preserving the
+    // preview camera's aspect ratio.  The centre crop of that render is exactly
+    // (width × height) — matching pixel-for-pixel what the safe zone overlay
+    // border shows.  cam.aspect is intentionally left unchanged so the camera
+    // framing stays identical to the live preview.
     const previewAspect = prevSize.x / prevSize.y;
     const targetAspect  = width / height;
     let renderW: number;
     let renderH: number;
     if (previewAspect >= targetAspect) {
-      // Preview is wider than the target → height is the binding constraint
-      renderH = height;
-      renderW = Math.round(height * previewAspect);
+      // Preview wider than target → height is the binding safe-zone constraint
+      renderH = Math.round(height / SAFE_ZONE_PADDING);
+      renderW = Math.round(renderH * previewAspect);
     } else {
-      // Preview is taller than the target → width is the binding constraint
-      renderW = width;
-      renderH = Math.round(width / previewAspect);
+      // Preview taller than target → width is the binding safe-zone constraint
+      renderW = Math.round(width / SAFE_ZONE_PADDING);
+      renderH = Math.round(renderW / previewAspect);
     }
 
     renderer.setPixelRatio(1);

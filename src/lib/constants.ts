@@ -34,6 +34,16 @@ export const EXPORT_PRESETS: ExportPreset[] = [
 export const FREE_MAX_DIMENSION = 1080;
 export const WATERMARK_TEXT = "Made with Dragon Drop Covers";
 
+/**
+ * Fraction of the viewport used for the safe zone overlay frame (0–1).
+ * The frame is centred and its longest axis fills this proportion of the
+ * viewport's constraining dimension.  captureFrame in BookScene uses the
+ * same value to decide how much to over-render before cropping, so the
+ * exported image exactly matches what's inside the overlay border.
+ * Keep both consumers in sync — change here only.
+ */
+export const SAFE_ZONE_PADDING = 0.88;
+
 export const BOOK_SIZE_LABELS: Record<string, string> = {
   hardcover: "Hardcover",
   softcover: "Softcover",
