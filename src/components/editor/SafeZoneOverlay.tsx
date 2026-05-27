@@ -13,7 +13,7 @@
 // The component is placed as a direct child of the "relative flex-1 overflow-hidden"
 // viewport div in the builder page — it uses "absolute inset-0" to match that div.
 
-import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { Grid3X3 } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
 import { EXPORT_PRESETS, SAFE_ZONE_PADDING } from "@/lib/constants";
@@ -49,33 +49,20 @@ export function SafeZoneOverlay() {
   const wrapRef   = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Track the container's pixel dimensions so we can redraw on resize
-  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
-
   const preset = EXPORT_PRESETS.find((p) => p.id === exportPresetId) ?? EXPORT_PRESETS[0];
 
-  // ResizeObserver keeps containerSize in sync with the viewport div
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect;
-      setContainerSize({ w: width, h: height });
-    });
-    ro.observe(el);
-    // Measure immediately so the first render isn't blank
-    const { width, height } = el.getBoundingClientRect();
-    setContainerSize({ w: width, h: height });
-    return () => ro.disconnect();
-  }, []);
-
   // ── Draw function ────────────────────────────────────────────────────────────
-  // Extracted into a stable useCallback so it can be stored in a ref and called
-  // from multiple places (resize, render cycle, explicit post-export redraw).
+  // Reads container dimensions directly from the DOM on every call so it is safe
+  // to invoke from any trigger — React render cycles, ResizeObserver callbacks,
+  // window events — without stale-closure issues on a cached containerSize state.
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const { w: cw, h: ch } = containerSize;
+    const wrap   = wrapRef.current;
+    if (!canvas || !wrap) return;
+
+    const rect = wrap.getBoundingClientRect();
+    const cw = Math.round(rect.width);
+    const ch = Math.round(rect.height);
     if (cw === 0 || ch === 0) return;
 
     // Only update canvas dimensions when they actually change — setting
@@ -96,7 +83,7 @@ export function SafeZoneOverlay() {
     // constants.ts.  captureFrame renders at 1/PADDING scale then center-crops
     // to the preset dimensions, so the exported pixels exactly match this frame.
     const PADDING = SAFE_ZONE_PADDING;
-    const presetRatio = preset.width / preset.height;
+    const presetRatio    = preset.width / preset.height;
     const containerRatio = cw / ch;
 
     let fw: number, fh: number;
@@ -166,39 +153,40 @@ export function SafeZoneOverlay() {
       ctx.textBaseline = "middle";
       ctx.fillText(label, pillX + PAD, pillY + PILL_H / 2);
     }
-  }, [containerSize, preset, showGrid]);
+  }, [preset, showGrid]);
 
   // ── Redraw triggers ──────────────────────────────────────────────────────────
 
-  // Always keep a ref to the latest draw function so event listeners and the
-  // no-dep effect can call it without capturing a stale closure.
+  // Always keep a ref to the latest draw so all three layers call the current
+  // version (with latest preset/showGrid) without needing re-registration.
   const drawRef = useRef(draw);
   useLayoutEffect(() => { drawRef.current = draw; });
 
-  // Layer 1 — Mount effect with RAF.
-  // Fires once on initial mount, waits one animation frame so the parent
-  // container has finished its layout pass and containerSize is non-zero.
-  // Guarantees the border is visible immediately on hard page refresh before
-  // any other trigger (state change, export, user interaction) fires.
+  // Layer 1 — ResizeObserver + initial RAF.
+  // ResizeObserver calls draw directly on every container resize (no setState →
+  // no re-render needed).  The RAF fires once on mount to catch the initial
+  // layout pass before any ResizeObserver or React state update has triggered.
   useEffect(() => {
-    requestAnimationFrame(() => { drawRef.current?.(); });
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => { drawRef.current(); });
+    ro.observe(el);
+    requestAnimationFrame(() => { drawRef.current(); });
+    return () => ro.disconnect();
   }, []); // empty — runs once on mount
 
-  // Layer 2 — Redraw after every render cycle.  Covers the case where a Zustand
-  // store update (e.g. addExportHistory) triggers a parent re-render that causes
-  // the canvas bitmap to be lost, even though none of our subscribed selectors
-  // (exportPresetId, showRuleOfThirds) actually changed.
-  // Using useLayoutEffect (not useEffect) runs synchronously after DOM mutations
-  // so the canvas is never visibly blank between paint frames.
+  // Layer 2 — After every React render (synchronous, before paint).
+  // Covers any render triggered by Zustand store updates or parent re-renders
+  // that clears the canvas bitmap even when the subscribed selectors haven't changed.
   useLayoutEffect(() => {
     drawRef.current();
   });
 
-  // Layer 3 — Explicit redraw request from ExportPanel — dispatched in its
-  // finally block so the overlay is guaranteed to be redrawn after every export
-  // attempt, even if SafeZoneOverlay didn't re-render at all.
+  // Layer 3 — After export.
+  // ExportPanel dispatches this event in its finally block so the overlay is
+  // guaranteed to redraw after every export attempt.
   useEffect(() => {
-    const handler = () => drawRef.current();
+    const handler = () => { drawRef.current(); };
     window.addEventListener("dragon-drop:redraw-overlay", handler);
     return () => window.removeEventListener("dragon-drop:redraw-overlay", handler);
   }, []); // empty — handler via ref is always current
