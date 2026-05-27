@@ -22,6 +22,7 @@ import type { ExportMode } from "@/types";
 interface SidePanelProps {
   onExport: (w: number, h: number, mode: ExportMode) => Promise<Blob | null>;
   onResetCamera: () => void;
+  getWatermarkPosition?: (w: number, h: number) => { x: number; y: number } | null;
 }
 
 const TABS = [
@@ -40,7 +41,7 @@ const ExportPanel = dynamic(() =>
   { ssr: false },
 );
 
-export function SidePanel({ onExport, onResetCamera }: SidePanelProps) {
+export function SidePanel({ onExport, onResetCamera, getWatermarkPosition }: SidePanelProps) {
   const activePanel = useEditorStore((s) => s.activePanel);
   const setActivePanel = useEditorStore((s) => s.setActivePanel);
   const autoRotate = useEditorStore((s) => s.autoRotate);
@@ -74,7 +75,7 @@ export function SidePanel({ onExport, onResetCamera }: SidePanelProps) {
         {activePanel === "lighting"   && <LightingControls />}
         {activePanel === "adjust"     && <PhotoAdjustments />}
         {activePanel === "text"       && <TextOverlayPanel />}
-        {activePanel === "export"     && <ExportPanel onExport={onExport} />}
+        {activePanel === "export"     && <ExportPanel onExport={onExport} getWatermarkPosition={getWatermarkPosition} />}
       </div>
 
       {/* Bottom camera controls */}

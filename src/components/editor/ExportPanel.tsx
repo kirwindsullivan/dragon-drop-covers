@@ -24,6 +24,9 @@ import type { ExportMode, ExportFormat, ExportHistoryItem } from "@/types";
 
 interface ExportPanelProps {
   onExport: (width: number, height: number, mode: ExportMode) => Promise<Blob | null>;
+  /** Optional: projects a 3D cover-face point to export-canvas coordinates for
+   *  accurate watermark anchoring.  Falls back to static position if absent. */
+  getWatermarkPosition?: (w: number, h: number) => { x: number; y: number } | null;
 }
 
 // ── Platform metadata (colors + abbreviation for group icons) ─────────────────
@@ -40,7 +43,7 @@ const PLATFORM_META: Record<string, { abbr: string; cls: string }> = {
 
 // ── Export Panel ──────────────────────────────────────────────────────────────
 
-export function ExportPanel({ onExport }: ExportPanelProps) {
+export function ExportPanel({ onExport, getWatermarkPosition }: ExportPanelProps) {
 
   // ── Tier resolution ──────────────────────────────────────────────────────
   // [Session 4] Project tier overrides user account tier in builder context.
@@ -117,9 +120,10 @@ export function ExportPanel({ onExport }: ExportPanelProps) {
 
       let finalBlob = blob;
 
-      // [Session 3] Watermark for free tier
+      // [Session 3] Watermark for free tier — anchor to 3D cover face when possible
       if (TIER_LIMITS[tier].watermark) {
-        finalBlob = await addWatermark(finalBlob, w, h);
+        const wmPos = getWatermarkPosition?.(w, h) ?? null;
+        finalBlob = await addWatermark(finalBlob, w, h, wmPos);
       }
 
       // Composite background for quickpost mode
@@ -188,7 +192,7 @@ export function ExportPanel({ onExport }: ExportPanelProps) {
       window.dispatchEvent(new CustomEvent("dragon-drop:redraw-overlay"));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPreset, tier, onExport, exportMode, exportFormat, background, textOverlay, projectId, addExportHistory]);
+  }, [selectedPreset, tier, onExport, exportMode, exportFormat, background, textOverlay, projectId, addExportHistory, getWatermarkPosition]);
 
   // ── Re-download handler (Session 5) ─────────────────────────────────────
   const handleReDownload = useCallback(async (item: ExportHistoryItem) => {
@@ -547,7 +551,12 @@ function formatAge(timestamp: number): string {
 
 // ── Canvas compositing helpers (unchanged from Sessions 2/3/4) ────────────────
 
-async function addWatermark(blob: Blob, w: number, h: number): Promise<Blob> {
+async function addWatermark(
+  blob: Blob,
+  w: number,
+  h: number,
+  pos?: { x: number; y: number } | null,
+): Promise<Blob> {
   return new Promise((resolve) => {
     const img = new window.Image();
     const url = URL.createObjectURL(blob);
@@ -558,14 +567,18 @@ async function addWatermark(blob: Blob, w: number, h: number): Promise<Blob> {
       const ctx = canvas.getContext("2d")!;
       ctx.drawImage(img, 0, 0);
 
-      // Place the watermark on the book cover face rather than the canvas corner.
-      // The default 3/4 hero view puts the cover's lower-right area at roughly
-      // (72%, 82%) of the canvas.  Baking it here means it sits on the opaque book
-      // pixels and cannot be stripped by discarding the transparent background layer.
-      //
-      // This position works for compositing AND quick-post modes:
-      //   • Compositing: watermark is on the book render itself — persists in the PNG
-      //   • Quick post:  background is added behind the watermarked render — also visible
+      // Anchor the watermark to the book cover face.
+      // When `pos` is provided it is the 3D-projected screen coordinate of a
+      // point in the lower-right area of the front cover face — accurate at any
+      // camera angle or zoom level.
+      // When `pos` is null (book group not yet ready, extreme orbit, etc.) we fall
+      // back to (w×0.72, h×0.82) which works well for the default hero camera angle.
+      const wmX = pos?.x ?? Math.round(w * 0.72);
+      const wmY = pos?.y ?? Math.round(h * 0.82);
+      if (!pos) {
+        console.warn("[watermark] no projected position — using static fallback (w×0.72, h×0.82)");
+      }
+
       const fontSize = Math.max(12, Math.round(w * 0.018));
       ctx.font         = `${fontSize}px sans-serif`;
       ctx.fillStyle    = "rgba(255, 255, 255, 0.20)";
@@ -576,7 +589,7 @@ async function addWatermark(blob: Blob, w: number, h: number): Promise<Blob> {
       ctx.shadowBlur    = Math.max(2, Math.round(fontSize * 0.15));
       ctx.shadowOffsetX = 0;
       ctx.shadowOffsetY = Math.round(fontSize * 0.06);
-      ctx.fillText(WATERMARK_TEXT, Math.round(w * 0.72), Math.round(h * 0.82));
+      ctx.fillText(WATERMARK_TEXT, wmX, wmY);
 
       URL.revokeObjectURL(url);
       canvas.toBlob((b) => resolve(b!), "image/png");

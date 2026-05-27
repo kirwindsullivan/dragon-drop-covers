@@ -175,9 +175,18 @@ export function SafeZoneOverlay() {
   const drawRef = useRef(draw);
   useLayoutEffect(() => { drawRef.current = draw; });
 
-  // Redraw after every render cycle.  Covers the case where a Zustand store
-  // update (e.g. addExportHistory) triggers a parent re-render that causes the
-  // canvas bitmap to be lost, even though none of our subscribed selectors
+  // Layer 1 — Mount effect with RAF.
+  // Fires once on initial mount, waits one animation frame so the parent
+  // container has finished its layout pass and containerSize is non-zero.
+  // Guarantees the border is visible immediately on hard page refresh before
+  // any other trigger (state change, export, user interaction) fires.
+  useEffect(() => {
+    requestAnimationFrame(() => { drawRef.current?.(); });
+  }, []); // empty — runs once on mount
+
+  // Layer 2 — Redraw after every render cycle.  Covers the case where a Zustand
+  // store update (e.g. addExportHistory) triggers a parent re-render that causes
+  // the canvas bitmap to be lost, even though none of our subscribed selectors
   // (exportPresetId, showRuleOfThirds) actually changed.
   // Using useLayoutEffect (not useEffect) runs synchronously after DOM mutations
   // so the canvas is never visibly blank between paint frames.
@@ -185,9 +194,9 @@ export function SafeZoneOverlay() {
     drawRef.current();
   });
 
-  // Explicit redraw request from ExportPanel — dispatched in its finally block
-  // so the overlay is guaranteed to be redrawn after every export attempt,
-  // even if SafeZoneOverlay didn't re-render at all.
+  // Layer 3 — Explicit redraw request from ExportPanel — dispatched in its
+  // finally block so the overlay is guaranteed to be redrawn after every export
+  // attempt, even if SafeZoneOverlay didn't re-render at all.
   useEffect(() => {
     const handler = () => drawRef.current();
     window.addEventListener("dragon-drop:redraw-overlay", handler);

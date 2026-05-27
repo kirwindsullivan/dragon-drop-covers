@@ -36,12 +36,18 @@ function ProceduralBook({
   size,
   coverUrl,
   spineTitle,
+  onGroupReady,
 }: {
   size: BookSize;
   coverUrl: string | null;
   spineTitle: string;
+  onGroupReady?: (g: THREE.Group) => void;
 }) {
   const [group, setGroup] = useState<THREE.Group | null>(null);
+
+  // Keep a stable ref to the callback so the useEffect dep array stays clean
+  const onGroupReadyRef = useRef(onGroupReady);
+  useEffect(() => { onGroupReadyRef.current = onGroupReady; });
 
   useEffect(() => {
     let coverTex: THREE.Texture | null = null;
@@ -52,6 +58,7 @@ function ProceduralBook({
     const build = () => {
       const g = buildProceduralBook(size, coverTex, spineTex, backTex);
       setGroup(g);
+      onGroupReadyRef.current?.(g);
     };
 
     if (coverUrl) {
@@ -96,9 +103,14 @@ function ProceduralBook({
 }
 
 // ─── GLB-loaded book component ────────────────────────────────────────────────
-function GlbBook({ path, coverUrl }: { path: string; coverUrl: string | null }) {
+function GlbBook({ path, coverUrl, onGroupReady }: { path: string; coverUrl: string | null; onGroupReady?: (g: THREE.Group) => void }) {
   const { scene } = useGLTF(path);
   const cloned = scene.clone(true);
+
+  useEffect(() => {
+    onGroupReady?.(cloned as unknown as THREE.Group);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!coverUrl) return;
@@ -123,10 +135,10 @@ function GlbBook({ path, coverUrl }: { path: string; coverUrl: string | null }) 
 }
 
 // ─── Book switcher ────────────────────────────────────────────────────────────
-function BookModel({ size, coverUrl, spineTitle }: { size: BookSize; coverUrl: string | null; spineTitle: string }) {
+function BookModel({ size, coverUrl, spineTitle, onGroupReady }: { size: BookSize; coverUrl: string | null; spineTitle: string; onGroupReady?: (g: THREE.Group) => void }) {
   const glbPath = MODEL_PATHS[size];
-  if (glbPath) return <GlbBook path={glbPath} coverUrl={coverUrl} />;
-  return <ProceduralBook size={size} coverUrl={coverUrl} spineTitle={spineTitle} />;
+  if (glbPath) return <GlbBook path={glbPath} coverUrl={coverUrl} onGroupReady={onGroupReady} />;
+  return <ProceduralBook size={size} coverUrl={coverUrl} spineTitle={spineTitle} onGroupReady={onGroupReady} />;
 }
 
 // ─── Dynamic lighting ─────────────────────────────────────────────────────────
@@ -235,10 +247,20 @@ function cropCenter(
   });
 }
 
+// ─── Watermark anchor in book local space ────────────────────────────────────
+// x = +0.4  → ~53 % from centre toward the fore-edge (positive x = right / fore-edge)
+// y = -0.6  → ~55 % from centre toward the bottom   (negative y = down)
+// z = +0.22 → front face of the hardcover board (pageDepth/2 + boardThickness/2 ≈ 0.20)
+// NOTE: calibrated for the procedural hardcover.  Re-measure when v2 GLTF models arrive.
+const WATERMARK_COVER_LOCAL = new THREE.Vector3(0.4, -0.6, 0.22);
+
 // ─── Main scene export ────────────────────────────────────────────────────────
 export interface BookSceneHandle {
   captureFrame: (width: number, height: number) => Promise<Blob | null>;
   resetCamera: () => void;
+  /** Project a point on the front cover face to export-canvas pixel coordinates.
+   *  Returns null if the book group is not yet ready or the point is off-screen. */
+  getWatermarkPosition: (exportW: number, exportH: number) => { x: number; y: number } | null;
 }
 
 export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => void }) {
@@ -253,8 +275,66 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
   const glRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  // Populated by ProceduralBook/GlbBook via onGroupReady — used for watermark projection
+  const bookGroupRef = useRef<THREE.Group | null>(null);
 
   const resetCamera = useCallback(() => setResetSignal((n) => n + 1), []);
+
+  const handleBookGroupReady = useCallback((g: THREE.Group) => {
+    bookGroupRef.current = g;
+  }, []);
+
+  const getWatermarkPosition = useCallback((exportW: number, exportH: number): { x: number; y: number } | null => {
+    const renderer = glRef.current;
+    const cam      = cameraRef.current;
+    const group    = bookGroupRef.current;
+    if (!renderer || !cam || !group) return null;
+
+    const prevSize = renderer.getSize(new THREE.Vector2());
+    if (prevSize.x === 0 || prevSize.y === 0) return null;
+
+    // Replicate captureFrame's render-size calculation
+    const previewAspect = prevSize.x / prevSize.y;
+    const targetAspect  = exportW / exportH;
+    let renderW: number, renderH: number;
+    if (previewAspect >= targetAspect) {
+      renderH = Math.round(exportH / SAFE_ZONE_PADDING);
+      renderW = Math.round(renderH * previewAspect);
+    } else {
+      renderW = Math.round(exportW / SAFE_ZONE_PADDING);
+      renderH = Math.round(renderW / previewAspect);
+    }
+
+    // Transform cover point to world space then to NDC
+    const worldPoint = WATERMARK_COVER_LOCAL.clone();
+    group.updateWorldMatrix(true, false);
+    worldPoint.applyMatrix4(group.matrixWorld);
+    worldPoint.project(cam);
+
+    // z > 1 means the point is behind the camera's far plane
+    if (worldPoint.z > 1) return null;
+
+    // NDC → render-canvas pixel coords
+    const screenX = (worldPoint.x * 0.5 + 0.5) * renderW;
+    const screenY = (-worldPoint.y * 0.5 + 0.5) * renderH;
+
+    // Subtract the centre-crop offset to arrive at export-canvas coords
+    const sx = Math.round((renderW - exportW) / 2);
+    const sy = Math.round((renderH - exportH) / 2);
+    const x  = Math.round(screenX - sx);
+    const y  = Math.round(screenY - sy);
+
+    // If the projected point lands outside the export canvas (extreme orbit angle),
+    // return null so the caller can fall back to the static position.
+    if (x < 0 || x > exportW || y < 0 || y > exportH) {
+      console.warn("[watermark] cover point outside export canvas — using static fallback");
+      return null;
+    }
+
+    return { x, y };
+  // COVER_LOCAL is a module-level constant; no reactive deps needed beyond the refs
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const captureFrame = useCallback(async (width: number, height: number): Promise<Blob | null> => {
     const renderer = glRef.current;
@@ -312,8 +392,8 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
   }, []);
 
   useEffect(() => {
-    onReady?.({ captureFrame, resetCamera });
-  }, [onReady, captureFrame, resetCamera]);
+    onReady?.({ captureFrame, resetCamera, getWatermarkPosition });
+  }, [onReady, captureFrame, resetCamera, getWatermarkPosition]);
 
   const filterStyle = [
     `brightness(${1 + photo.brightness})`,
@@ -376,7 +456,7 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
         />
 
         {/* Book — no Suspense so it mounts synchronously */}
-        <BookModel size={bookSize} coverUrl={coverUrl} spineTitle={spineTitle} />
+        <BookModel size={bookSize} coverUrl={coverUrl} spineTitle={spineTitle} onGroupReady={handleBookGroupReady} />
       </Canvas>
     </div>
   );

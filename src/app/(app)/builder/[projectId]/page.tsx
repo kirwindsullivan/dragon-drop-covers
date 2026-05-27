@@ -152,6 +152,11 @@ export default function BuilderPage() {
     [],
   );
 
+  const handleGetWatermarkPosition = useCallback(
+    (w: number, h: number) => sceneHandleRef.current?.getWatermarkPosition(w, h) ?? null,
+    [],
+  );
+
   // ── Loading / error states ─────────────────────────────────────────────────
 
   if (loading) {
@@ -212,7 +217,7 @@ export default function BuilderPage() {
       </div>
 
       {/* Side panel */}
-      <SidePanel onExport={handleExport} onResetCamera={handleResetCamera} />
+      <SidePanel onExport={handleExport} onResetCamera={handleResetCamera} getWatermarkPosition={handleGetWatermarkPosition} />
     </div>
   );
 }
