@@ -13,7 +13,7 @@
 // The component is placed as a direct child of the "relative flex-1 overflow-hidden"
 // viewport div in the builder page — it uses "absolute inset-0" to match that div.
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { Grid3X3 } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
 import { EXPORT_PRESETS, SAFE_ZONE_PADDING } from "@/lib/constants";
@@ -69,16 +69,21 @@ export function SafeZoneOverlay() {
     return () => ro.disconnect();
   }, []);
 
-  // Redraw whenever anything visual changes
+  // ── Draw function ────────────────────────────────────────────────────────────
+  // Extracted into a stable useCallback so it can be stored in a ref and called
+  // from multiple places (resize, render cycle, explicit post-export redraw).
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const { w: cw, h: ch } = containerSize;
     if (cw === 0 || ch === 0) return;
 
-    // Size the canvas to match its container (1:1 physical pixels)
-    canvas.width  = cw;
-    canvas.height = ch;
+    // Only update canvas dimensions when they actually change — setting
+    // canvas.width always clears the bitmap, even when the value is identical.
+    if (canvas.width !== cw || canvas.height !== ch) {
+      canvas.width  = cw;
+      canvas.height = ch;
+    }
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -163,9 +168,31 @@ export function SafeZoneOverlay() {
     }
   }, [containerSize, preset, showGrid]);
 
+  // ── Redraw triggers ──────────────────────────────────────────────────────────
+
+  // Always keep a ref to the latest draw function so event listeners and the
+  // no-dep effect can call it without capturing a stale closure.
+  const drawRef = useRef(draw);
+  useLayoutEffect(() => { drawRef.current = draw; });
+
+  // Redraw after every render cycle.  Covers the case where a Zustand store
+  // update (e.g. addExportHistory) triggers a parent re-render that causes the
+  // canvas bitmap to be lost, even though none of our subscribed selectors
+  // (exportPresetId, showRuleOfThirds) actually changed.
+  // Using useLayoutEffect (not useEffect) runs synchronously after DOM mutations
+  // so the canvas is never visibly blank between paint frames.
+  useLayoutEffect(() => {
+    drawRef.current();
+  });
+
+  // Explicit redraw request from ExportPanel — dispatched in its finally block
+  // so the overlay is guaranteed to be redrawn after every export attempt,
+  // even if SafeZoneOverlay didn't re-render at all.
   useEffect(() => {
-    draw();
-  }, [draw]);
+    const handler = () => drawRef.current();
+    window.addEventListener("dragon-drop:redraw-overlay", handler);
+    return () => window.removeEventListener("dragon-drop:redraw-overlay", handler);
+  }, []); // empty — handler via ref is always current
 
   return (
     // pointer-events: none so OrbitControls on the Three.js canvas still works

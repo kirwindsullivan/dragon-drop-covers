@@ -1,10 +1,10 @@
 // GET /api/cleanup — daily cron job (see vercel.json, runs at 02:00 UTC).
-// Deletes free-tier covers older than 30 days and exports older than 24 hours.
+// Deletes free-tier covers older than 14 days and exports older than 24 hours.
 // Secured via CRON_SECRET env var (Vercel sends it as Authorization: Bearer).
 import { NextRequest, NextResponse } from "next/server";
 import { listByPrefix, deleteObject } from "@/lib/r2/client";
 
-const MS_30_DAYS  = 30 * 24 * 60 * 60 * 1000;
+const MS_14_DAYS  = 14 * 24 * 60 * 60 * 1000; // [Fix session] free-tier cover retention: 14 days
 const MS_24_HOURS =      24 * 60 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   const exportItems    = all.filter((i) => i.key.includes("/exports/"));
 
   for (const item of freeCoverItems) {
-    if (now - item.lastModified.getTime() > MS_30_DAYS) {
+    if (now - item.lastModified.getTime() > MS_14_DAYS) {
       try   { await deleteObject(item.key); deleted.push(item.key); }
       catch (e) { errors.push(`${item.key}: ${String(e)}`); }
     }

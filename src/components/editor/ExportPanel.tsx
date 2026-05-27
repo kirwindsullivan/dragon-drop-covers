@@ -183,6 +183,9 @@ export function ExportPanel({ onExport }: ExportPanelProps) {
       }
     } finally {
       setExporting(false);
+      // Notify SafeZoneOverlay to redraw — the state changes above (exporting,
+      // exportHistory) can cause renders that leave the canvas blank.
+      window.dispatchEvent(new CustomEvent("dragon-drop:redraw-overlay"));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPreset, tier, onExport, exportMode, exportFormat, background, textOverlay, projectId, addExportHistory]);
@@ -554,11 +557,27 @@ async function addWatermark(blob: Blob, w: number, h: number): Promise<Blob> {
       canvas.height = h;
       const ctx = canvas.getContext("2d")!;
       ctx.drawImage(img, 0, 0);
-      ctx.font      = `${Math.max(12, w * 0.018)}px sans-serif`;
-      ctx.fillStyle = "rgba(255,255,255,0.35)";
+
+      // Place the watermark on the book cover face rather than the canvas corner.
+      // The default 3/4 hero view puts the cover's lower-right area at roughly
+      // (72%, 82%) of the canvas.  Baking it here means it sits on the opaque book
+      // pixels and cannot be stripped by discarding the transparent background layer.
+      //
+      // This position works for compositing AND quick-post modes:
+      //   • Compositing: watermark is on the book render itself — persists in the PNG
+      //   • Quick post:  background is added behind the watermarked render — also visible
+      const fontSize = Math.max(12, Math.round(w * 0.018));
+      ctx.font         = `${fontSize}px sans-serif`;
+      ctx.fillStyle    = "rgba(255, 255, 255, 0.20)";
       ctx.textAlign    = "right";
       ctx.textBaseline = "bottom";
-      ctx.fillText(WATERMARK_TEXT, w - 12, h - 12);
+      // Subtle drop shadow keeps the text legible on light and dark cover art
+      ctx.shadowColor   = "rgba(0, 0, 0, 0.45)";
+      ctx.shadowBlur    = Math.max(2, Math.round(fontSize * 0.15));
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = Math.round(fontSize * 0.06);
+      ctx.fillText(WATERMARK_TEXT, Math.round(w * 0.72), Math.round(h * 0.82));
+
       URL.revokeObjectURL(url);
       canvas.toBlob((b) => resolve(b!), "image/png");
     };

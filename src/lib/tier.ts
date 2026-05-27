@@ -27,7 +27,7 @@ export const TIER_LIMITS = {
   free: {
     maxDimension: 1080,
     watermark: true,
-    retentionDays: 30,
+    retentionDays: 14, // [Fix session] updated from 30 → 14 days
   },
   // [Session 4] Project Pass: same resolution as free, no watermark, 90-day retention
   project_pass: {
