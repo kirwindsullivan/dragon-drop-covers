@@ -1,11 +1,13 @@
 "use client";
 
 import { useRef, useCallback, Suspense, useEffect } from "react";
+import { useAuth } from "@clerk/nextjs";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronLeft, Flame } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
 import { SidePanel } from "@/components/editor/SidePanel";
+import { SafeZoneOverlay } from "@/components/editor/SafeZoneOverlay";
 import { UserMenu } from "@/components/auth/UserMenu";
 import { bgToCss } from "@/lib/utils";
 import type { ExportMode } from "@/types";
@@ -28,15 +30,51 @@ function SceneFallback() {
   );
 }
 
+// ── Outer page shell ──────────────────────────────────────────────────────────
+// Thin wrapper whose only job is to pass `key={userId}` to EditorContent.
+// When the authenticated user changes (e.g. logout → login without a full
+// page reload) this forces a complete unmount + remount of the editor tree,
+// guaranteeing the Zustand store is reset before the new user's session begins.
 export default function EditorPage() {
-  const background = useEditorStore((s) => s.background);
-  const sceneHandleRef = useRef<BookSceneHandle | null>(null);
+  const { userId, isLoaded } = useAuth();
+
+  // Wait for Clerk to resolve before mounting — prevents a brief flash where
+  // userId is null (which would cause an immediate remount once Clerk resolves).
+  if (!isLoaded) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-black">
+        <Flame className="h-10 w-10 text-brand-500 animate-pulse" />
+      </div>
+    );
+  }
+
+  return <EditorContent key={userId ?? "unauthenticated"} />;
+}
+
+// ── Editor content ────────────────────────────────────────────────────────────
+// Contains all editor state and layout.  Receives a stable key from EditorPage
+// so it remounts cleanly whenever the authenticated user changes.
+
+function EditorContent() {
+  const background      = useEditorStore((s) => s.background);
+  const resetEditorState = useEditorStore((s) => s.resetEditorState);
 
   // On first load, ensure new users get their default "free" tier persisted
   // in Clerk's publicMetadata (fire-and-forget; the UI defaults to "free" anyway)
   useEffect(() => {
     fetch("/api/set-default-tier", { method: "POST" }).catch(() => {});
   }, []);
+
+  // Reset everything when leaving the standalone editor so the next user (or
+  // the same user after a re-login) starts clean.  CoverDropzone's restore
+  // effect re-loads the correct cover from localStorage on remount.
+  useEffect(() => {
+    return () => {
+      resetEditorState();
+    };
+  }, [resetEditorState]);
+
+  const sceneHandleRef = useRef<BookSceneHandle | null>(null);
 
   const handleSceneReady = useCallback((handle: BookSceneHandle) => {
     sceneHandleRef.current = handle;
@@ -90,6 +128,9 @@ export default function EditorPage() {
         <Suspense fallback={<SceneFallback />}>
           <BookScene onReady={handleSceneReady} />
         </Suspense>
+
+        {/* Safe zone overlay — HTML canvas, never captured by Three.js export */}
+        <SafeZoneOverlay />
       </div>
 
       {/* Side panel */}
