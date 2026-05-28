@@ -5,6 +5,7 @@ import { useDropzone } from "react-dropzone";
 import { ImageIcon, UploadCloud, X, AlertCircle } from "lucide-react";
 import { useUser } from "@clerk/nextjs";
 import { useEditorStore } from "@/store/editorStore";
+import { CAMERA_PRESETS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 // ── localStorage key helpers ──────────────────────────────────────────────────
@@ -54,6 +55,10 @@ export function CoverDropzone() {
   const userId  = user?.id ?? null;
   // User-scoped key, or null while auth is still loading
   const lsKey   = userId ? getCoverLsKey(userId) : null;
+
+  // [v2.1 Part 3] Camera presets
+  const activeCameraPreset = useEditorStore((s) => s.activeCameraPreset);
+  const animateCamera      = useEditorStore((s) => s.animateCamera);
 
   const [isDragOver, setIsDragOver]   = useState(false);
   const [uploadPct, setUploadPct]     = useState<number | null>(null); // null = idle
@@ -310,6 +315,31 @@ export function CoverDropzone() {
               )}
             >
               {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* [v2.1 Part 3] Camera presets ──────────────────────────────────────── */}
+      <div>
+        <label className="block mb-2 text-xs font-semibold uppercase tracking-widest text-brand-300/70">
+          Camera Angle
+        </label>
+        <div className="flex gap-1.5 flex-wrap">
+          {CAMERA_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              title={preset.description}
+              onClick={() => animateCamera(preset.id)}
+              className={cn(
+                "flex flex-col items-center gap-0.5 rounded-lg border px-2 py-2 text-[10px] transition-all flex-1 min-w-[52px]",
+                activeCameraPreset === preset.id
+                  ? "border-brand-500 bg-brand-900/60 text-brand-200"
+                  : "border-surface-3 text-brand-300/60 hover:border-brand-600 hover:text-white",
+              )}
+            >
+              <span className="text-sm leading-none">{preset.icon}</span>
+              <span className="font-medium leading-none">{preset.label}</span>
             </button>
           ))}
         </div>

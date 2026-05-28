@@ -53,6 +53,51 @@ export const BOOK_SIZE_LABELS: Record<string, string> = {
 };
 
 /** Physical aspect ratios (width:height) for each book size */
+// [v2.1] Camera presets — positions stored as plain tuples (no THREE imports here;
+// this file is imported by server-side code).  BookScene converts to THREE.Vector3.
+export const CAMERA_PRESETS = [
+  {
+    id:          "hero",
+    position:    [2.5,  1.2,  4.5] as [number, number, number],
+    target:      [0,    0,    0  ] as [number, number, number],
+    label:       "Hero",
+    icon:        "⭐",
+    description: "Classic 3/4 product angle",
+  },
+  {
+    id:          "frontFlat",
+    position:    [0,    0,    5.5] as [number, number, number],
+    target:      [0,    0,    0  ] as [number, number, number],
+    label:       "Front",
+    icon:        "🔲",
+    description: "Straight-on cover view",
+  },
+  {
+    id:          "dramaticLow",
+    position:    [2,   -1.5,  4  ] as [number, number, number],
+    target:      [0,    0.5,  0  ] as [number, number, number],
+    label:       "Dramatic",
+    icon:        "🎬",
+    description: "Low angle cinematic",
+  },
+  {
+    id:          "spineFeature",
+    position:    [-4,   0.5,  2  ] as [number, number, number],
+    target:      [0,    0,    0  ] as [number, number, number],
+    label:       "Spine",
+    icon:        "📚",
+    description: "Spine prominently visible",
+  },
+  {
+    id:          "overhead",
+    position:    [0,    6,    2  ] as [number, number, number],
+    target:      [0,    0,    0  ] as [number, number, number],
+    label:       "Overhead",
+    icon:        "🔭",
+    description: "Top-down flat lay",
+  },
+] as const;
+
 export const BOOK_ASPECT: Record<string, number> = {
   hardcover: 6 / 9,
   softcover: 6 / 9,

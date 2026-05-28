@@ -69,6 +69,12 @@ export interface ExportPreset {
 
 export type AccountTier = "free" | "paid";
 
+// [v2.1] Material finish
+export type FinishType = "matte" | "satin" | "gloss";
+
+// [v2.1] Atmospheric effects
+export type AtmosphericEffectType = "none" | "mist" | "dust" | "rain";
+
 // [Session 5] Export history — one entry per completed export, stored in Zustand.
 // projectId links history to the current project so entries are filtered per project.
 export interface ExportHistoryItem {
@@ -125,4 +131,13 @@ export interface EditorState {
   showRuleOfThirds: boolean;
   // [Session 5] Export history — last N exports across all projects
   exportHistory: ExportHistoryItem[];
+
+  // [v2.1] Scene & interaction upgrades
+  finish: FinishType;
+  hdriIntensity: number;           // 0–2.0; maps to renderer.toneMappingExposure
+  atmosphericEffect: AtmosphericEffectType;
+  atmosphericIntensity: number;    // 0–100
+  activeCameraPreset: string | null;
+  /** Monotonically increasing counter — increment to trigger camera animation */
+  _cameraAnimVersion: number;
 }

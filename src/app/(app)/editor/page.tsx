@@ -8,6 +8,7 @@ import { ChevronLeft, Flame } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
 import { SidePanel } from "@/components/editor/SidePanel";
 import { SafeZoneOverlay } from "@/components/editor/SafeZoneOverlay";
+import { TextOverlayCanvas } from "@/components/editor/TextOverlayCanvas";
 import { UserMenu } from "@/components/auth/UserMenu";
 import { bgToCss } from "@/lib/utils";
 import type { ExportMode } from "@/types";
@@ -80,10 +81,6 @@ function EditorContent() {
     sceneHandleRef.current = handle;
   }, []);
 
-  const handleResetCamera = useCallback(() => {
-    sceneHandleRef.current?.resetCamera();
-  }, []);
-
   const handleExport = useCallback(
     async (width: number, height: number, _mode: ExportMode): Promise<Blob | null> => {
       if (!sceneHandleRef.current) return null;
@@ -129,12 +126,15 @@ function EditorContent() {
           <BookScene onReady={handleSceneReady} />
         </Suspense>
 
-        {/* Safe zone overlay — HTML canvas, never captured by Three.js export */}
+        {/* [v2.1 Part 7] Text overlay canvas — z-[5], pointer-events none, excluded from exports */}
+        <TextOverlayCanvas />
+
+        {/* Safe zone overlay — HTML canvas, never captured by Three.js export — z-[10] */}
         <SafeZoneOverlay />
       </div>
 
       {/* Side panel */}
-      <SidePanel onExport={handleExport} onResetCamera={handleResetCamera} />
+      <SidePanel onExport={handleExport} />
     </div>
   );
 }

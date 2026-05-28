@@ -10,6 +10,8 @@ import type {
   ExportFormat,
   MoodPreset,
   ExportHistoryItem, // [Session 5]
+  FinishType,          // [v2.1]
+  AtmosphericEffectType, // [v2.1]
 } from "@/types";
 
 const DEFAULT_BACKGROUND: BackgroundPreset = {
@@ -24,7 +26,8 @@ const DEFAULT_BACKGROUND: BackgroundPreset = {
 const DEFAULT_LIGHTING: LightingState = {
   padX: 0.65,
   padY: 0.35,
-  ambientIntensity: 0.6,
+  // [v2.1] Reduced to ~60% of original 0.6 so HDRI + point light feel balanced
+  ambientIntensity: 0.35,
   pointIntensity: 2.5,
 };
 
@@ -54,6 +57,14 @@ export const MOOD_PRESETS: MoodPreset[] = [
 ];
 
 interface Actions {
+  // [v2.1] Scene upgrades
+  setFinish: (finish: FinishType) => void;
+  setHdriIntensity: (v: number) => void;
+  setAtmosphericEffect: (effect: AtmosphericEffectType) => void;
+  setAtmosphericIntensity: (v: number) => void;
+  setActiveCameraPreset: (id: string | null) => void;
+  /** Animate camera to preset — increments _cameraAnimVersion to trigger BookScene animation */
+  animateCamera: (presetId: string) => void;
   setBookSize: (size: BookSize) => void;
   setCoverImage: (url: string | null, file: File | null, r2Key?: string | null) => void;
   setCoverR2Key: (key: string | null) => void;
@@ -105,10 +116,30 @@ const initialState: EditorState = {
   // [Session 5] Safe zone / export history
   showRuleOfThirds: false,
   exportHistory: [] as ExportHistoryItem[],
+
+  // [v2.1] Scene upgrades
+  finish:               "matte" as FinishType,
+  hdriIntensity:        1.0,
+  atmosphericEffect:    "none" as AtmosphericEffectType,
+  atmosphericIntensity: 50,
+  activeCameraPreset:   null,
+  _cameraAnimVersion:   0,
 };
 
 export const useEditorStore = create<EditorState & Actions>()((set) => ({
   ...initialState,
+
+  // [v2.1] Scene upgrade actions
+  setFinish: (finish) => set({ finish }),
+  setHdriIntensity: (hdriIntensity) => set({ hdriIntensity }),
+  setAtmosphericEffect: (atmosphericEffect) => set({ atmosphericEffect }),
+  setAtmosphericIntensity: (atmosphericIntensity) => set({ atmosphericIntensity }),
+  setActiveCameraPreset: (activeCameraPreset) => set({ activeCameraPreset }),
+  animateCamera: (presetId) =>
+    set((s) => ({
+      activeCameraPreset:  presetId,
+      _cameraAnimVersion:  s._cameraAnimVersion + 1,
+    })),
 
   setBookSize: (bookSize) => set({ bookSize }),
   setCoverImage: (coverImageUrl, coverImageFile, r2Key) =>
@@ -178,5 +209,12 @@ export const useEditorStore = create<EditorState & Actions>()((set) => ({
       activePanel:         initialState.activePanel,      // resets to "cover"
       showRuleOfThirds:    initialState.showRuleOfThirds, // [Session 5]
       // exportHistory intentionally NOT reset — history persists across projects
+      // [v2.1] Scene upgrades
+      finish:               initialState.finish,
+      hdriIntensity:        initialState.hdriIntensity,
+      atmosphericEffect:    initialState.atmosphericEffect,
+      atmosphericIntensity: initialState.atmosphericIntensity,
+      activeCameraPreset:   initialState.activeCameraPreset,
+      // _cameraAnimVersion intentionally NOT reset — animation signals don't leak
     }),
 }));

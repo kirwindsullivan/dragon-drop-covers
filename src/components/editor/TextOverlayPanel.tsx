@@ -1,5 +1,11 @@
 "use client";
 
+// [Sessions 1–5] Text overlay panel.
+// [v2.1 Part 8] Simplified — removed color pickers, position buttons, font/size
+//               controls.  Title and tagline inputs remain; live preview is handled
+//               by TextOverlayCanvas (Part 7).  Export compositing logic in
+//               ExportPanel is UNCHANGED — stored style fields still exist in state.
+
 import { useEditorStore } from "@/store/editorStore";
 
 export function TextOverlayPanel() {
@@ -34,48 +40,12 @@ export function TextOverlayPanel() {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="label-xs">Title Color</label>
-          <input
-            type="color"
-            value={text.titleColor}
-            onChange={(e) => setTextOverlay({ titleColor: e.target.value })}
-            className="h-9 w-full cursor-pointer rounded-lg border border-surface-3 bg-transparent p-1"
-          />
-        </div>
-        <div>
-          <label className="label-xs">Tagline Color</label>
-          <input
-            type="color"
-            value={text.taglineColor}
-            onChange={(e) => setTextOverlay({ taglineColor: e.target.value })}
-            className="h-9 w-full cursor-pointer rounded-lg border border-surface-3 bg-transparent p-1"
-          />
-        </div>
-      </div>
-
-      <div>
-        <label className="label-xs">Position</label>
-        <div className="flex gap-2 mt-1">
-          {(["top", "center", "bottom"] as const).map((pos) => (
-            <button
-              key={pos}
-              onClick={() => setTextOverlay({ position: pos })}
-              className={`flex-1 rounded-lg border py-1.5 text-xs capitalize transition-all ${
-                text.position === pos
-                  ? "border-brand-500 bg-brand-900/60 text-brand-200"
-                  : "border-surface-3 text-brand-300/60 hover:border-brand-600"
-              }`}
-            >
-              {pos}
-            </button>
-          ))}
-        </div>
-      </div>
+      <p className="text-[11px] text-brand-300/40 italic">
+        For final typography, export and use your design tool
+      </p>
 
       <p className="text-xs text-brand-300/40">
-        Text renders on top of the final export composite. Logo upload coming soon.
+        Preview renders live on the canvas. Text composites on Quick Post export.
       </p>
     </div>
   );

@@ -1,11 +1,27 @@
 "use client";
 
+// [Sessions 1–5] Lighting drag pad + ambient/point sliders.
+// [v2.1] Additions: HDRI intensity (toneMappingExposure) slider + material finish
+//        segmented control.  All existing logic is preserved unchanged.
+
 import { useRef, useCallback } from "react";
 import { useEditorStore } from "@/store/editorStore";
+import { cn } from "@/lib/utils";
+import type { FinishType } from "@/types";
+
+const FINISH_OPTIONS: { id: FinishType; label: string; desc: string }[] = [
+  { id: "matte", label: "Matte", desc: "Flat, non-reflective" },
+  { id: "satin", label: "Satin", desc: "Subtle sheen" },
+  { id: "gloss", label: "Gloss", desc: "Sharp specular — classic hardcover" },
+];
 
 export function LightingControls() {
-  const lighting = useEditorStore((s) => s.lighting);
-  const setLighting = useEditorStore((s) => s.setLighting);
+  const lighting         = useEditorStore((s) => s.lighting);
+  const setLighting      = useEditorStore((s) => s.setLighting);
+  const hdriIntensity    = useEditorStore((s) => s.hdriIntensity);
+  const setHdriIntensity = useEditorStore((s) => s.setHdriIntensity);
+  const finish           = useEditorStore((s) => s.finish);
+  const setFinish        = useEditorStore((s) => s.setFinish);
   const padRef = useRef<HTMLDivElement>(null);
 
   const handlePadInteraction = useCallback(
@@ -41,7 +57,6 @@ export function LightingControls() {
       window.addEventListener("touchmove", move, { passive: false });
       window.addEventListener("touchend", up);
 
-      // Also fire on the initial click
       const { cx, cy } = getXY(e);
       const x = Math.max(0, Math.min(1, (cx - rect.left) / rect.width));
       const y = Math.max(0, Math.min(1, (cy - rect.top) / rect.height));
@@ -52,84 +67,95 @@ export function LightingControls() {
 
   return (
     <div className="space-y-5">
+      {/* ── Light direction drag pad (unchanged) ──────────────────────────── */}
       <div>
         <label className="block mb-2 text-xs font-semibold uppercase tracking-widest text-brand-300/70">
           Light Direction
         </label>
-        {/* Circular drag pad */}
         <div className="flex justify-center">
           <div
             ref={padRef}
             onMouseDown={handlePadInteraction}
             onTouchStart={handlePadInteraction}
             className="relative w-40 h-40 rounded-full bg-surface-2 border border-surface-3 cursor-crosshair select-none overflow-hidden"
-            style={{
-              background:
-                "radial-gradient(circle at center, #2a1f45 0%, #0f0a1a 100%)",
-            }}
+            style={{ background: "radial-gradient(circle at center, #2a1f45 0%, #0f0a1a 100%)" }}
           >
-            {/* Grid lines */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="w-full h-px bg-surface-3/50" />
             </div>
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="h-full w-px bg-surface-3/50" />
             </div>
-
-            {/* Handle */}
             <div
               className="absolute w-5 h-5 rounded-full bg-brand-400 shadow-[0_0_12px_rgba(168,85,247,0.8)] border-2 border-white/80 -translate-x-1/2 -translate-y-1/2 pointer-events-none"
-              style={{
-                left: `${lighting.padX * 100}%`,
-                top: `${lighting.padY * 100}%`,
-              }}
+              style={{ left: `${lighting.padX * 100}%`, top: `${lighting.padY * 100}%` }}
             />
-
-            {/* Corner labels */}
             <span className="absolute top-1.5 left-2 text-[9px] text-brand-300/40 pointer-events-none">UL</span>
             <span className="absolute top-1.5 right-2 text-[9px] text-brand-300/40 pointer-events-none">UR</span>
             <span className="absolute bottom-1.5 left-2 text-[9px] text-brand-300/40 pointer-events-none">LL</span>
             <span className="absolute bottom-1.5 right-2 text-[9px] text-brand-300/40 pointer-events-none">LR</span>
           </div>
         </div>
-        <p className="mt-2 text-center text-xs text-brand-300/40">
-          Drag to reposition key light
-        </p>
+        <p className="mt-2 text-center text-xs text-brand-300/40">Drag to reposition key light</p>
       </div>
 
-      {/* Ambient intensity */}
+      {/* ── Ambient intensity (unchanged) ─────────────────────────────────── */}
       <SliderRow
         label="Ambient Light"
         value={lighting.ambientIntensity}
-        min={0}
-        max={1.5}
-        step={0.01}
+        min={0} max={1.5} step={0.01}
         onChange={(v) => setLighting({ ambientIntensity: v })}
         displayValue={lighting.ambientIntensity.toFixed(2)}
       />
 
-      {/* Point intensity */}
+      {/* ── Key light intensity (unchanged) ───────────────────────────────── */}
       <SliderRow
         label="Key Light"
         value={lighting.pointIntensity}
-        min={0}
-        max={4}
-        step={0.05}
+        min={0} max={4} step={0.05}
         onChange={(v) => setLighting({ pointIntensity: v })}
         displayValue={lighting.pointIntensity.toFixed(2)}
       />
+
+      {/* ── [v2.1 Part 4] HDRI / environment intensity ────────────────────── */}
+      <SliderRow
+        label="Environment"
+        value={hdriIntensity}
+        min={0} max={2} step={0.05}
+        onChange={setHdriIntensity}
+        displayValue={`${Math.round(hdriIntensity * 100)}%`}
+      />
+
+      {/* ── [v2.1 Part 5] Material finish selector ────────────────────────── */}
+      <div>
+        <label className="block mb-2 text-xs font-semibold uppercase tracking-widest text-brand-300/70">
+          Material Finish
+        </label>
+        <div className="grid grid-cols-3 gap-2">
+          {FINISH_OPTIONS.map(({ id, label, desc }) => (
+            <button
+              key={id}
+              title={desc}
+              onClick={() => setFinish(id)}
+              className={cn(
+                "flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-xs transition-all",
+                finish === id
+                  ? "border-brand-500 bg-brand-900/60 text-brand-200"
+                  : "border-surface-3 text-brand-300/60 hover:border-brand-600 hover:text-white",
+              )}
+            >
+              <span className="font-semibold">{label}</span>
+              <span className="text-[9px] text-brand-300/40 leading-tight text-center">{desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
 
 function SliderRow({
-  label,
-  value,
-  min,
-  max,
-  step,
-  onChange,
-  displayValue,
+  label, value, min, max, step, onChange, displayValue,
 }: {
   label: string;
   value: number;
@@ -149,9 +175,7 @@ function SliderRow({
       </div>
       <input
         type="range"
-        min={min}
-        max={max}
-        step={step}
+        min={min} max={max} step={step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
         className="w-full accent-brand-500 cursor-pointer"

@@ -9,10 +9,11 @@ import { ChevronLeft, Flame } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
 import { SidePanel } from "@/components/editor/SidePanel";
 import { SafeZoneOverlay } from "@/components/editor/SafeZoneOverlay";
+import { TextOverlayCanvas } from "@/components/editor/TextOverlayCanvas";
 import { UserMenu } from "@/components/auth/UserMenu";
 import { bgToCss } from "@/lib/utils";
 import { useAutoSave } from "@/hooks/useAutoSave";
-import type { ExportMode, BackgroundPreset, LightingState, PhotoAdjustments } from "@/types";
+import type { ExportMode, BackgroundPreset, LightingState, PhotoAdjustments, FinishType, AtmosphericEffectType } from "@/types";
 import type { BookSceneHandle } from "@/components/editor/BookScene";
 import type { ProjectMeta } from "@/lib/projects/types";
 
@@ -67,15 +68,21 @@ function BuilderContent({ projectId }: { projectId: string }) {
   const [error, setError]     = useState<string | null>(null);
 
   // Editor store setters — used to hydrate state from saved project
-  const setCoverImage    = useEditorStore((s) => s.setCoverImage);
-  const setBackground    = useEditorStore((s) => s.setBackground);
-  const setLighting      = useEditorStore((s) => s.setLighting);
-  const setPhoto         = useEditorStore((s) => s.setPhoto);
-  const setBookSize      = useEditorStore((s) => s.setBookSize);
-  const setTextOverlay   = useEditorStore((s) => s.setTextOverlay);
-  const setProjectId     = useEditorStore((s) => s.setProjectId);
-  const setProjectTier   = useEditorStore((s) => s.setProjectTier);
-  const resetEditorState = useEditorStore((s) => s.resetEditorState);
+  const setCoverImage          = useEditorStore((s) => s.setCoverImage);
+  const setBackground          = useEditorStore((s) => s.setBackground);
+  const setLighting            = useEditorStore((s) => s.setLighting);
+  const setPhoto               = useEditorStore((s) => s.setPhoto);
+  const setBookSize            = useEditorStore((s) => s.setBookSize);
+  const setTextOverlay         = useEditorStore((s) => s.setTextOverlay);
+  const setProjectId           = useEditorStore((s) => s.setProjectId);
+  const setProjectTier         = useEditorStore((s) => s.setProjectTier);
+  const resetEditorState       = useEditorStore((s) => s.resetEditorState);
+  // [v2.1] New scene settings
+  const setFinish              = useEditorStore((s) => s.setFinish);
+  const setHdriIntensity       = useEditorStore((s) => s.setHdriIntensity);
+  const setAtmosphericEffect   = useEditorStore((s) => s.setAtmosphericEffect);
+  const setAtmosphericIntensity = useEditorStore((s) => s.setAtmosphericIntensity);
+  const animateCamera          = useEditorStore((s) => s.animateCamera);
 
   const background = useEditorStore((s) => s.background);
 
@@ -121,6 +128,23 @@ function BuilderContent({ projectId }: { projectId: string }) {
           });
         }
 
+        // [v2.1] Hydrate new scene settings
+        if (meta.settings?.finish) {
+          setFinish(meta.settings.finish as FinishType);
+        }
+        if (meta.settings?.hdriIntensity != null) {
+          setHdriIntensity(meta.settings.hdriIntensity);
+        }
+        if (meta.settings?.atmosphericEffect) {
+          setAtmosphericEffect(meta.settings.atmosphericEffect as AtmosphericEffectType);
+        }
+        if (meta.settings?.atmosphericIntensity != null) {
+          setAtmosphericIntensity(meta.settings.atmosphericIntensity);
+        }
+        if (meta.settings?.activeCameraPreset) {
+          animateCamera(meta.settings.activeCameraPreset);
+        }
+
         if (meta.coverKey) {
           // Fetch the cover through our own API route — this proxies it server-side
           // so the browser receives it from the same origin as a blob, bypassing R2
@@ -144,7 +168,7 @@ function BuilderContent({ projectId }: { projectId: string }) {
       }
     }
     void load();
-  }, [projectId, resetEditorState, setCoverImage, setBackground, setLighting, setPhoto, setBookSize, setTextOverlay, setProjectId, setProjectTier]);
+  }, [projectId, resetEditorState, setCoverImage, setBackground, setLighting, setPhoto, setBookSize, setTextOverlay, setProjectId, setProjectTier, setFinish, setHdriIntensity, setAtmosphericEffect, setAtmosphericIntensity, animateCamera]);
 
   // Reset everything when leaving the builder so the standalone editor (and the
   // next project) start clean.
@@ -164,10 +188,6 @@ function BuilderContent({ projectId }: { projectId: string }) {
 
   const handleSceneReady = useCallback((handle: BookSceneHandle) => {
     sceneHandleRef.current = handle;
-  }, []);
-
-  const handleResetCamera = useCallback(() => {
-    sceneHandleRef.current?.resetCamera();
   }, []);
 
   const handleExport = useCallback(
@@ -238,12 +258,15 @@ function BuilderContent({ projectId }: { projectId: string }) {
           <BookScene onReady={handleSceneReady} />
         </Suspense>
 
-        {/* Safe zone overlay — HTML canvas, never captured by Three.js export */}
+        {/* [v2.1 Part 7] Text overlay canvas — z-[5], pointer-events none, excluded from exports */}
+        <TextOverlayCanvas />
+
+        {/* Safe zone overlay — HTML canvas, never captured by Three.js export — z-[10] */}
         <SafeZoneOverlay />
       </div>
 
       {/* Side panel */}
-      <SidePanel onExport={handleExport} onResetCamera={handleResetCamera} getWatermarkPosition={handleGetWatermarkPosition} />
+      <SidePanel onExport={handleExport} getWatermarkPosition={handleGetWatermarkPosition} />
     </div>
   );
 }

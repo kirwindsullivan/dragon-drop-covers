@@ -5,11 +5,27 @@ import { Check } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
 import { BACKGROUND_PRESETS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import type { BackgroundPreset } from "@/types";
+import type { BackgroundPreset, AtmosphericEffectType } from "@/types";
+
+// [v2.1 Part 6] Atmospheric effects metadata
+const ATMOSPHERIC_EFFECTS: {
+  id:    AtmosphericEffectType;
+  label: string;
+  desc:  string;
+}[] = [
+  { id: "mist", label: "Mist",  desc: "FogExp2 · density tracks slider" },
+  { id: "dust", label: "Dust",  desc: "800 warm-gold rising particles"  },
+  { id: "rain", label: "Rain",  desc: "1200 cool-blue falling streaks"  },
+];
 
 export function BackgroundSelector() {
-  const background = useEditorStore((s) => s.background);
+  const background   = useEditorStore((s) => s.background);
   const setBackground = useEditorStore((s) => s.setBackground);
+  // [v2.1 Part 6]
+  const atmosphericEffect    = useEditorStore((s) => s.atmosphericEffect);
+  const atmosphericIntensity = useEditorStore((s) => s.atmosphericIntensity);
+  const setAtmosphericEffect    = useEditorStore((s) => s.setAtmosphericEffect);
+  const setAtmosphericIntensity = useEditorStore((s) => s.setAtmosphericIntensity);
   const [customColor, setCustomColor] = useState("#1a0030");
   const [customColor2, setCustomColor2] = useState("#0d001a");
   const [customMode, setCustomMode] = useState<"solid" | "gradient">("gradient");
@@ -133,6 +149,61 @@ export function BackgroundSelector() {
       <p className="text-xs text-brand-300/40 text-center">
         Image backgrounds — coming soon
       </p>
+
+      {/* ── [v2.1 Part 6] Atmospheric effects ─────────────────────────────── */}
+      <div className="rounded-xl border border-surface-3 bg-surface-1 p-3 space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-brand-300/70">
+          Atmosphere
+        </p>
+
+        {/* Effect toggles — only one active at a time */}
+        <div className="grid grid-cols-3 gap-2">
+          {ATMOSPHERIC_EFFECTS.map(({ id, label, desc }) => (
+            <button
+              key={id}
+              title={desc}
+              onClick={() =>
+                setAtmosphericEffect(atmosphericEffect === id ? "none" : id)
+              }
+              className={cn(
+                "rounded-lg border px-2 py-2 text-xs font-medium transition-all",
+                atmosphericEffect === id
+                  ? "border-brand-500 bg-brand-900/60 text-brand-200"
+                  : "border-surface-3 text-brand-300/60 hover:border-brand-600 hover:text-white",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Intensity slider — only visible when an effect is active */}
+        {atmosphericEffect !== "none" && (
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-semibold uppercase tracking-widest text-brand-300/70">
+                Intensity
+              </span>
+              <span className="text-xs font-mono text-brand-300">
+                {atmosphericIntensity}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0} max={100} step={1}
+              value={atmosphericIntensity}
+              onChange={(e) => setAtmosphericIntensity(parseInt(e.target.value))}
+              className="w-full accent-brand-500 cursor-pointer"
+            />
+          </div>
+        )}
+
+        {atmosphericEffect === "none" && (
+          <p className="text-[10px] text-brand-300/40">
+            Select an effect above. Only one active at a time.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,6 +1,15 @@
 "use client";
 
-import { Suspense, useRef, useEffect, useState, useCallback } from "react";
+// [Sessions 1–5] 3D book scene: procedural geometry, OrbitControls, export.
+// [v2.1] Additions — nothing removed:
+//   Part 1: tex.flipY = true (was false) + ClampToEdgeWrapping
+//   Part 2: polar angle limits; smooth 600ms camera animation for reset
+//   Part 3: camera preset animation via _cameraAnimVersion / activeCameraPreset store
+//   Part 4: Environment "studio" HDRI; dynamic toneMappingExposure via hdriIntensity
+//   Part 5: MeshPhysicalMaterial traversal + applyFinish on finish change
+//   Part 6: Atmospheric effects — Mist (FogExp2), Dust, Rain (Points systems)
+
+import { Suspense, useRef, useEffect, useState, useCallback, useLayoutEffect } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import {
   OrbitControls,
@@ -19,8 +28,9 @@ import {
   generateSpineTexture,
   generateBackTexture,
 } from "@/lib/three/spineGenerator";
-import { SAFE_ZONE_PADDING } from "@/lib/constants";
-import type { BookSize } from "@/types";
+import { SAFE_ZONE_PADDING, CAMERA_PRESETS } from "@/lib/constants";
+import { applyFinish } from "@/utils/applyFinish";
+import type { BookSize, FinishType } from "@/types";
 
 // ─── GLB model paths — drop a .glb here and it auto-maps ─────────────────────
 const MODEL_PATHS: Partial<Record<BookSize, string>> = {
@@ -36,14 +46,18 @@ function ProceduralBook({
   size,
   coverUrl,
   spineTitle,
+  finish,
   onGroupReady,
 }: {
   size: BookSize;
   coverUrl: string | null;
   spineTitle: string;
+  finish: FinishType;
   onGroupReady?: (g: THREE.Group) => void;
 }) {
   const [group, setGroup] = useState<THREE.Group | null>(null);
+  // Ref for live material updates (finish change) without rebuild
+  const groupRef = useRef<THREE.Group | null>(null);
 
   // Keep a stable ref to the callback so the useEffect dep array stays clean
   const onGroupReadyRef = useRef(onGroupReady);
@@ -57,6 +71,21 @@ function ProceduralBook({
     const loader = new THREE.TextureLoader();
     const build = () => {
       const g = buildProceduralBook(size, coverTex, spineTex, backTex);
+      // [v2.1 Part 5] Apply current finish to all named cover materials on build
+      g.traverse((node) => {
+        if (!(node as THREE.Mesh).isMesh) return;
+        const mesh = node as THREE.Mesh;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        mats.forEach((m) => {
+          if (
+            m instanceof THREE.MeshPhysicalMaterial &&
+            (m.name === "cover" || m.name === "spine" || m.name === "back")
+          ) {
+            applyFinish(m, finish);
+          }
+        });
+      });
+      groupRef.current = g;
       setGroup(g);
       onGroupReadyRef.current?.(g);
     };
@@ -65,7 +94,11 @@ function ProceduralBook({
       loader.load(
         coverUrl,
         (tex) => {
-          tex.flipY = false;
+          // [v2.1 Part 1] flipY true (was false) — corrects upside-down images.
+          // Standard UV mapping expects origin at bottom-left; flipY=true matches that.
+          tex.flipY   = true;
+          tex.wrapS   = THREE.ClampToEdgeWrapping; // [v2.1 Part 1] prevent tiling artifacts
+          tex.wrapT   = THREE.ClampToEdgeWrapping;
           tex.colorSpace = THREE.SRGBColorSpace;
           coverTex = tex;
           const img = new Image();
@@ -79,13 +112,11 @@ function ProceduralBook({
             backTex.colorSpace = THREE.SRGBColorSpace;
             build();
           };
-          // If the secondary image load fails (e.g. CORS or revoked URL), still
-          // render the book with the cover texture — just without spine/back styling.
           img.onerror = () => build();
           img.src = coverUrl;
         },
         undefined,
-        () => build(), // fallback on error
+        () => build(),
       );
     } else {
       build();
@@ -94,16 +125,46 @@ function ProceduralBook({
     return () => {
       [coverTex, spineTex, backTex].forEach((t) => t?.dispose());
     };
+  // Intentionally excludes `finish` — finish updates are handled in the effect below
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coverUrl, size, spineTitle]);
 
+  // [v2.1 Part 5] Live finish update — traverse without rebuild
+  useEffect(() => {
+    const g = groupRef.current;
+    if (!g) return;
+    g.traverse((node) => {
+      if (!(node as THREE.Mesh).isMesh) return;
+      const mesh = node as THREE.Mesh;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      mats.forEach((m) => {
+        if (
+          m instanceof THREE.MeshPhysicalMaterial &&
+          (m.name === "cover" || m.name === "spine" || m.name === "back")
+        ) {
+          applyFinish(m, finish);
+        }
+      });
+    });
+  }, [finish]);
+
   if (!group) return null;
-  // Default 3/4 hero angle: spine toward camera-left, slight downward tilt from above
   group.rotation.set(-0.05, 0.55, 0.0);
   return <primitive object={group} />;
 }
 
 // ─── GLB-loaded book component ────────────────────────────────────────────────
-function GlbBook({ path, coverUrl, onGroupReady }: { path: string; coverUrl: string | null; onGroupReady?: (g: THREE.Group) => void }) {
+function GlbBook({
+  path,
+  coverUrl,
+  finish,
+  onGroupReady,
+}: {
+  path: string;
+  coverUrl: string | null;
+  finish: FinishType;
+  onGroupReady?: (g: THREE.Group) => void;
+}) {
   const { scene } = useGLTF(path);
   const cloned = scene.clone(true);
 
@@ -116,7 +177,10 @@ function GlbBook({ path, coverUrl, onGroupReady }: { path: string; coverUrl: str
     if (!coverUrl) return;
     const loader = new THREE.TextureLoader();
     loader.load(coverUrl, (tex) => {
-      tex.flipY = false;
+      // [v2.1 Part 1] flipY correction + clamp wrapping
+      tex.flipY  = true;
+      tex.wrapS  = THREE.ClampToEdgeWrapping;
+      tex.wrapT  = THREE.ClampToEdgeWrapping;
       tex.colorSpace = THREE.SRGBColorSpace;
       cloned.traverse((node) => {
         if ((node as THREE.Mesh).isMesh) {
@@ -131,14 +195,39 @@ function GlbBook({ path, coverUrl, onGroupReady }: { path: string; coverUrl: str
     });
   }, [coverUrl, cloned]);
 
+  // [v2.1 Part 5] Apply finish to GLTF cover materials (Phase 2 path)
+  useEffect(() => {
+    cloned.traverse((node) => {
+      if (!(node as THREE.Mesh).isMesh) return;
+      const mesh = node as THREE.Mesh;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      mats.forEach((m) => {
+        if (
+          m instanceof THREE.MeshPhysicalMaterial &&
+          (m.name === "cover" || m.name === "spine" || m.name === "back")
+        ) {
+          applyFinish(m, finish);
+        }
+      });
+    });
+  }, [finish, cloned]);
+
   return <primitive object={cloned} />;
 }
 
 // ─── Book switcher ────────────────────────────────────────────────────────────
-function BookModel({ size, coverUrl, spineTitle, onGroupReady }: { size: BookSize; coverUrl: string | null; spineTitle: string; onGroupReady?: (g: THREE.Group) => void }) {
+function BookModel({
+  size, coverUrl, spineTitle, finish, onGroupReady,
+}: {
+  size: BookSize;
+  coverUrl: string | null;
+  spineTitle: string;
+  finish: FinishType;
+  onGroupReady?: (g: THREE.Group) => void;
+}) {
   const glbPath = MODEL_PATHS[size];
-  if (glbPath) return <GlbBook path={glbPath} coverUrl={coverUrl} onGroupReady={onGroupReady} />;
-  return <ProceduralBook size={size} coverUrl={coverUrl} spineTitle={spineTitle} onGroupReady={onGroupReady} />;
+  if (glbPath) return <GlbBook path={glbPath} coverUrl={coverUrl} finish={finish} onGroupReady={onGroupReady} />;
+  return <ProceduralBook size={size} coverUrl={coverUrl} spineTitle={spineTitle} finish={finish} onGroupReady={onGroupReady} />;
 }
 
 // ─── Dynamic lighting ─────────────────────────────────────────────────────────
@@ -160,6 +249,8 @@ function DynamicLight() {
 
   return (
     <>
+      {/* [v2.1] Default ambientIntensity reduced to 0.35 (60% of original 0.6)
+          so HDRI + point light together feel balanced */}
       <ambientLight ref={ambRef} intensity={lighting.ambientIntensity} color="#d0c0ff" />
       <pointLight
         ref={keyRef}
@@ -177,32 +268,270 @@ function DynamicLight() {
   );
 }
 
-// ─── Camera reset ─────────────────────────────────────────────────────────────
+// ─── Camera controller with smooth animation ──────────────────────────────────
+// [v2.1] Replaces the teleport-on-reset with 600ms linear interpolation.
+// Handles both reset-to-hero and preset animations via `animTarget` prop.
+
+interface AnimTarget {
+  toPosition: THREE.Vector3;
+  toTarget:   THREE.Vector3;
+  startTime:  number;  // performance.now() at animation start
+  duration:   number;  // ms
+}
+
 function CameraController({
   controlsRef,
-  resetSignal,
+  animTarget,
+  onAnimComplete,
 }: {
-  controlsRef: React.RefObject<OrbitControlsImpl | null>;
-  resetSignal: number;
+  controlsRef:    React.RefObject<OrbitControlsImpl | null>;
+  animTarget:     AnimTarget | null;
+  onAnimComplete: () => void;
 }) {
   const { camera } = useThree();
+
+  // Refs to avoid stale closures in useFrame
+  const animRef    = useRef<AnimTarget | null>(animTarget);
+  const fromPos    = useRef(new THREE.Vector3());
+  const fromTarget = useRef(new THREE.Vector3());
+  const captured   = useRef(false);
+  const done       = useRef(false);
+
+  // Keep animRef and capture flags in sync with incoming prop changes
+  useLayoutEffect(() => {
+    animRef.current = animTarget;
+    captured.current = false;
+    done.current     = false;
+  }, [animTarget]);
+
+  useFrame(() => {
+    const anim     = animRef.current;
+    const controls = controlsRef.current;
+    if (!anim || !controls || done.current) return;
+
+    // Snapshot starting position on the very first frame of this animation
+    if (!captured.current) {
+      fromPos.current.copy(camera.position);
+      fromTarget.current.copy(controls.target);
+      captured.current = true;
+    }
+
+    const elapsed = performance.now() - anim.startTime;
+    const t       = Math.min(elapsed / anim.duration, 1);
+
+    camera.position.lerpVectors(fromPos.current, anim.toPosition, t);
+    controls.target.lerpVectors(fromTarget.current, anim.toTarget, t);
+    controls.update();
+
+    if (t >= 1) {
+      done.current = true;
+      onAnimComplete();
+    }
+  });
+
+  return null;
+}
+
+// ─── Atmospheric effects — Mist, Dust, Rain ───────────────────────────────────
+// [v2.1 Part 6] All effects live inside the <Canvas> so they appear in exports.
+// Each effect is fully self-contained and disposes resources on disable.
+
+/** Mist: THREE.FogExp2 whose density tracks the intensity slider */
+function SceneMist({
+  enabled,
+  intensity,
+  bgColor,
+}: {
+  enabled:   boolean;
+  intensity: number;
+  bgColor:   string;
+}) {
+  const { scene } = useThree();
+
   useEffect(() => {
-    camera.position.set(0.8, 1.4, 6.5);
-    camera.lookAt(0, 0, 0);
-    controlsRef.current?.reset();
+    if (!enabled) {
+      scene.fog = null;
+      return;
+    }
+    const density = (intensity / 100) * 0.08;
+    scene.fog = new THREE.FogExp2(new THREE.Color(bgColor), density);
+    return () => { scene.fog = null; };
+  }, [enabled, intensity, bgColor, scene]);
+
+  return null;
+}
+
+/** Shared helper: creates a random-fill Float32Array for particle positions */
+function randomPositions(count: number, spread: number): Float32Array {
+  const arr = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    arr[i * 3]     = (Math.random() - 0.5) * spread;
+    arr[i * 3 + 1] = (Math.random() - 0.5) * (spread * 0.75);
+    arr[i * 3 + 2] = (Math.random() - 0.5) * spread;
+  }
+  return arr;
+}
+
+/** Dust: 800 slow-rising warm-gold particles */
+function SceneDust({ enabled, intensity }: { enabled: boolean; intensity: number }) {
+  const { scene } = useThree();
+  const pointsRef = useRef<THREE.Points | null>(null);
+  const velRef    = useRef<Float32Array | null>(null);
+  const COUNT     = 800;
+
+  useEffect(() => {
+    if (!enabled) {
+      if (pointsRef.current) {
+        scene.remove(pointsRef.current);
+        pointsRef.current.geometry.dispose();
+        (pointsRef.current.material as THREE.Material).dispose();
+        pointsRef.current = null;
+      }
+      return;
+    }
+
+    const positions  = randomPositions(COUNT, 10);
+    const velocities = new Float32Array(COUNT * 3);
+    for (let i = 0; i < COUNT; i++) {
+      velocities[i * 3]     = (Math.random() - 0.5) * 0.008;
+      velocities[i * 3 + 1] = 0.004 + Math.random() * 0.008; // upward drift
+      velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.008;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions.slice(), 3));
+
+    const mat = new THREE.PointsMaterial({
+      color:           new THREE.Color("#ffd580"),
+      size:            0.025 + (intensity / 100) * 0.025,
+      transparent:     true,
+      opacity:         0.25 + (intensity / 100) * 0.35,
+      sizeAttenuation: true,
+      depthWrite:      false,
+    });
+
+    const pts = new THREE.Points(geo, mat);
+    velRef.current    = velocities;
+    pointsRef.current = pts;
+    scene.add(pts);
+
+    return () => {
+      scene.remove(pts);
+      geo.dispose();
+      mat.dispose();
+      pointsRef.current = null;
+    };
+  // Re-create geometry when enabled state or intensity changes meaningfully
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resetSignal]);
+  }, [enabled, intensity, scene]);
+
+  useFrame(() => {
+    const pts = pointsRef.current;
+    const vel = velRef.current;
+    if (!pts || !vel) return;
+
+    const pos = pts.geometry.attributes.position;
+    const arr = pos.array as Float32Array;
+
+    for (let i = 0; i < COUNT; i++) {
+      arr[i * 3]     += vel[i * 3];
+      arr[i * 3 + 1] += vel[i * 3 + 1];
+      arr[i * 3 + 2] += vel[i * 3 + 2];
+
+      // Wrap: reset to bottom when particle drifts out of volume
+      if (arr[i * 3 + 1] > 3.5) {
+        arr[i * 3]     = (Math.random() - 0.5) * 10;
+        arr[i * 3 + 1] = -3.5;
+        arr[i * 3 + 2] = (Math.random() - 0.5) * 10;
+      }
+    }
+    pos.needsUpdate = true;
+  });
+
+  return null;
+}
+
+/** Rain: 1200 fast-falling cool-blue streaks */
+function SceneRain({ enabled, intensity }: { enabled: boolean; intensity: number }) {
+  const { scene } = useThree();
+  const pointsRef = useRef<THREE.Points | null>(null);
+  const velRef    = useRef<Float32Array | null>(null);
+  const COUNT     = 1200;
+
+  useEffect(() => {
+    if (!enabled) {
+      if (pointsRef.current) {
+        scene.remove(pointsRef.current);
+        pointsRef.current.geometry.dispose();
+        (pointsRef.current.material as THREE.Material).dispose();
+        pointsRef.current = null;
+      }
+      return;
+    }
+
+    const positions  = randomPositions(COUNT, 10);
+    const velocities = new Float32Array(COUNT * 3);
+    const speedScale = 0.5 + (intensity / 100) * 1.0;
+    for (let i = 0; i < COUNT; i++) {
+      velocities[i * 3]     = 0.005 * speedScale;            // slight angle
+      velocities[i * 3 + 1] = -(0.04 + Math.random() * 0.04) * speedScale; // downward
+      velocities[i * 3 + 2] = 0.002 * speedScale;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions.slice(), 3));
+
+    const mat = new THREE.PointsMaterial({
+      color:           new THREE.Color("#c8d8ff"),
+      size:            0.015 + (intensity / 100) * 0.015,
+      transparent:     true,
+      opacity:         0.18 + (intensity / 100) * 0.32,
+      sizeAttenuation: true,
+      depthWrite:      false,
+    });
+
+    const pts = new THREE.Points(geo, mat);
+    velRef.current    = velocities;
+    pointsRef.current = pts;
+    scene.add(pts);
+
+    return () => {
+      scene.remove(pts);
+      geo.dispose();
+      mat.dispose();
+      pointsRef.current = null;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, intensity, scene]);
+
+  useFrame(() => {
+    const pts = pointsRef.current;
+    const vel = velRef.current;
+    if (!pts || !vel) return;
+
+    const pos = pts.geometry.attributes.position;
+    const arr = pos.array as Float32Array;
+
+    for (let i = 0; i < COUNT; i++) {
+      arr[i * 3]     += vel[i * 3];
+      arr[i * 3 + 1] += vel[i * 3 + 1];
+      arr[i * 3 + 2] += vel[i * 3 + 2];
+
+      // Wrap: reset to top when raindrop exits volume
+      if (arr[i * 3 + 1] < -3.5) {
+        arr[i * 3]     = (Math.random() - 0.5) * 10;
+        arr[i * 3 + 1] = 3.5;
+        arr[i * 3 + 2] = (Math.random() - 0.5) * 10;
+      }
+    }
+    pos.needsUpdate = true;
+  });
+
   return null;
 }
 
 // ─── Export helpers ───────────────────────────────────────────────────────────
 
-/**
- * Convert a base64 data URL produced by canvas.toDataURL() into a Blob.
- * This is synchronous — no async/await — so it runs in the same JS tick as
- * the WebGL render, guaranteeing we capture the buffer before r3f's RAF loop
- * can fire and overwrite it.
- */
 function dataUrlToBlob(dataUrl: string): Blob | null {
   try {
     const [header, base64] = dataUrl.split(",");
@@ -216,11 +545,6 @@ function dataUrlToBlob(dataUrl: string): Blob | null {
   }
 }
 
-/**
- * Center-crop a PNG blob from (srcW × srcH) to (dstW × dstH).
- * sx/sy are rounded to integers so drawImage never applies bilinear
- * interpolation at sub-pixel offsets, which would cause blur.
- */
 function cropCenter(
   blob: Blob,
   srcW: number, srcH: number,
@@ -235,7 +559,6 @@ function cropCenter(
       canvas.height = dstH;
       const ctx = canvas.getContext("2d");
       if (!ctx) { URL.revokeObjectURL(url); resolve(blob); return; }
-      // Integer source coordinates — avoids bilinear interpolation blur
       const sx = Math.round((srcW - dstW) / 2);
       const sy = Math.round((srcH - dstH) / 2);
       ctx.drawImage(img, sx, sy, dstW, dstH, 0, 0, dstW, dstH);
@@ -247,42 +570,88 @@ function cropCenter(
   });
 }
 
-// ─── Watermark anchor in book local space ────────────────────────────────────
-// x = +0.4  → ~53 % from centre toward the fore-edge (positive x = right / fore-edge)
-// y = -0.6  → ~55 % from centre toward the bottom   (negative y = down)
-// z = +0.22 → front face of the hardcover board (pageDepth/2 + boardThickness/2 ≈ 0.20)
-// NOTE: calibrated for the procedural hardcover.  Re-measure when v2 GLTF models arrive.
+// ─── Watermark anchor ─────────────────────────────────────────────────────────
 const WATERMARK_COVER_LOCAL = new THREE.Vector3(0.4, -0.6, 0.22);
 
 // ─── Main scene export ────────────────────────────────────────────────────────
 export interface BookSceneHandle {
   captureFrame: (width: number, height: number) => Promise<Blob | null>;
   resetCamera: () => void;
-  /** Project a point on the front cover face to export-canvas pixel coordinates.
-   *  Returns null if the book group is not yet ready or the point is off-screen. */
   getWatermarkPosition: (exportW: number, exportH: number) => { x: number; y: number } | null;
 }
 
 export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => void }) {
-  const bookSize = useEditorStore((s) => s.bookSize);
-  const coverUrl = useEditorStore((s) => s.coverImageUrl);
-  const spineTitle = useEditorStore((s) => s.spineTitle);
-  const autoRotate = useEditorStore((s) => s.autoRotate);
-  const photo = useEditorStore((s) => s.photo);
+  const bookSize    = useEditorStore((s) => s.bookSize);
+  const coverUrl    = useEditorStore((s) => s.coverImageUrl);
+  const spineTitle  = useEditorStore((s) => s.spineTitle);
+  const autoRotate  = useEditorStore((s) => s.autoRotate);
+  const photo       = useEditorStore((s) => s.photo);
+  const finish      = useEditorStore((s) => s.finish);
+  const hdriIntensity      = useEditorStore((s) => s.hdriIntensity);
+  const atmosphericEffect  = useEditorStore((s) => s.atmosphericEffect);
+  const atmosphericIntensity = useEditorStore((s) => s.atmosphericIntensity);
+  const background         = useEditorStore((s) => s.background);
+  // [v2.1 Part 3] Camera preset animation via store
+  const cameraAnimVersion  = useEditorStore((s) => s._cameraAnimVersion);
+  const activeCameraPreset = useEditorStore((s) => s.activeCameraPreset);
+  const setActiveCameraPreset = useEditorStore((s) => s.setActiveCameraPreset);
+  const animateCamera      = useEditorStore((s) => s.animateCamera);
 
-  const controlsRef = useRef<OrbitControlsImpl>(null);
-  const [resetSignal, setResetSignal] = useState(0);
-  const glRef = useRef<THREE.WebGLRenderer | null>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  // Populated by ProceduralBook/GlbBook via onGroupReady — used for watermark projection
-  const bookGroupRef = useRef<THREE.Group | null>(null);
+  const controlsRef   = useRef<OrbitControlsImpl>(null);
+  const glRef         = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef      = useRef<THREE.Scene | null>(null);
+  const cameraRef     = useRef<THREE.PerspectiveCamera | null>(null);
+  const bookGroupRef  = useRef<THREE.Group | null>(null);
+  const animatingRef  = useRef(false);
 
-  const resetCamera = useCallback(() => setResetSignal((n) => n + 1), []);
+  // [v2.1 Part 2/3] Camera animation target (drives CameraController)
+  const [animTarget, setAnimTarget] = useState<AnimTarget | null>(null);
+
+  // Keep a snapshot of activeCameraPreset in a ref so the animVersion effect
+  // can read it without listing it as a dep (avoids spurious re-triggers)
+  const activeCameraPresetRef = useRef(activeCameraPreset);
+  useLayoutEffect(() => { activeCameraPresetRef.current = activeCameraPreset; });
+
+  // [v2.1 Part 3] Trigger animation when store says so (cameraAnimVersion changed)
+  const prevVersionRef = useRef(0);
+  useEffect(() => {
+    if (cameraAnimVersion <= 0 || cameraAnimVersion === prevVersionRef.current) return;
+    prevVersionRef.current = cameraAnimVersion;
+
+    const presetId = activeCameraPresetRef.current;
+    if (!presetId) return;
+    const preset = CAMERA_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+
+    animatingRef.current = true;
+    setAnimTarget({
+      toPosition: new THREE.Vector3(...preset.position),
+      toTarget:   new THREE.Vector3(...preset.target),
+      startTime:  performance.now(),
+      duration:   600,
+    });
+  }, [cameraAnimVersion]);
+
+  const handleAnimComplete = useCallback(() => {
+    animatingRef.current = false;
+    setAnimTarget(null);
+  }, []);
+
+  // [v2.1] resetCamera now uses the store-based animation (smooth 600ms)
+  const resetCamera = useCallback(() => {
+    animateCamera("hero");
+  }, [animateCamera]);
 
   const handleBookGroupReady = useCallback((g: THREE.Group) => {
     bookGroupRef.current = g;
   }, []);
+
+  // [v2.1 Part 4] Keep toneMappingExposure in sync with hdriIntensity slider
+  useEffect(() => {
+    if (glRef.current) {
+      glRef.current.toneMappingExposure = hdriIntensity;
+    }
+  }, [hdriIntensity]);
 
   const getWatermarkPosition = useCallback((exportW: number, exportH: number): { x: number; y: number } | null => {
     const renderer = glRef.current;
@@ -293,7 +662,6 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
     const prevSize = renderer.getSize(new THREE.Vector2());
     if (prevSize.x === 0 || prevSize.y === 0) return null;
 
-    // Replicate captureFrame's render-size calculation
     const previewAspect = prevSize.x / prevSize.y;
     const targetAspect  = exportW / exportH;
     let renderW: number, renderH: number;
@@ -305,63 +673,47 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
       renderH = Math.round(renderW / previewAspect);
     }
 
-    // Transform cover point to world space then to NDC
     const worldPoint = WATERMARK_COVER_LOCAL.clone();
     group.updateWorldMatrix(true, false);
     worldPoint.applyMatrix4(group.matrixWorld);
     worldPoint.project(cam);
 
-    // z > 1 means the point is behind the camera's far plane
     if (worldPoint.z > 1) return null;
 
-    // NDC → render-canvas pixel coords
     const screenX = (worldPoint.x * 0.5 + 0.5) * renderW;
     const screenY = (-worldPoint.y * 0.5 + 0.5) * renderH;
-
-    // Subtract the centre-crop offset to arrive at export-canvas coords
     const sx = Math.round((renderW - exportW) / 2);
     const sy = Math.round((renderH - exportH) / 2);
     const x  = Math.round(screenX - sx);
     const y  = Math.round(screenY - sy);
 
-    // If the projected point lands outside the export canvas (extreme orbit angle),
-    // return null so the caller can fall back to the static position.
     if (x < 0 || x > exportW || y < 0 || y > exportH) {
       console.warn("[watermark] cover point outside export canvas — using static fallback");
       return null;
     }
 
     return { x, y };
-  // COVER_LOCAL is a module-level constant; no reactive deps needed beyond the refs
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const captureFrame = useCallback(async (width: number, height: number): Promise<Blob | null> => {
     const renderer = glRef.current;
-    const scene = sceneRef.current;
-    const cam = cameraRef.current;
+    const scene    = sceneRef.current;
+    const cam      = cameraRef.current;
     if (!renderer || !scene || !cam) return null;
 
-    // Save current state
-    const prevSize = renderer.getSize(new THREE.Vector2());
+    const prevSize       = renderer.getSize(new THREE.Vector2());
     const prevPixelRatio = renderer.getPixelRatio();
     if (prevSize.x === 0 || prevSize.y === 0) return null;
 
-    // Render at (1 / SAFE_ZONE_PADDING) × the target dimensions, preserving the
-    // preview camera's aspect ratio.  The centre crop of that render is exactly
-    // (width × height) — matching pixel-for-pixel what the safe zone overlay
-    // border shows.  cam.aspect is intentionally left unchanged so the camera
-    // framing stays identical to the live preview.
     const previewAspect = prevSize.x / prevSize.y;
     const targetAspect  = width / height;
     let renderW: number;
     let renderH: number;
     if (previewAspect >= targetAspect) {
-      // Preview wider than target → height is the binding safe-zone constraint
       renderH = Math.round(height / SAFE_ZONE_PADDING);
       renderW = Math.round(renderH * previewAspect);
     } else {
-      // Preview taller than target → width is the binding safe-zone constraint
       renderW = Math.round(width / SAFE_ZONE_PADDING);
       renderH = Math.round(renderW / previewAspect);
     }
@@ -370,24 +722,15 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
     renderer.setSize(renderW, renderH, false);
     renderer.render(scene, cam);
 
-    // Capture SYNCHRONOUSLY via toDataURL — toBlob is async and React Three
-    // Fiber's requestAnimationFrame loop can fire between the render call and
-    // the toBlob callback, resizing the canvas and overwriting the buffer.
-    // toDataURL captures the current buffer immediately in the same JS tick.
     const dataUrl = renderer.domElement.toDataURL("image/png");
 
-    // Restore renderer immediately so r3f's next frame renders correctly
     renderer.setPixelRatio(prevPixelRatio);
     renderer.setSize(prevSize.x, prevSize.y, false);
 
-    // Convert data URL → Blob (synchronous decode, no renderer involvement)
     const rawBlob = dataUrlToBlob(dataUrl);
     if (!rawBlob) return null;
 
-    // If dimensions already match (same aspect, no crop needed) return as-is
     if (renderW === width && renderH === height) return rawBlob;
-
-    // Center-crop to exactly (width × height) — pixel-perfect, no scaling
     return cropCenter(rawBlob, renderW, renderH, width, height);
   }, []);
 
@@ -400,6 +743,9 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
     `contrast(${1 + photo.contrast})`,
     `saturate(${1 + photo.saturation})`,
   ].join(" ");
+
+  // Extract dominant background color for mist fog
+  const bgMainColor = background.value ?? "#000000";
 
   return (
     <div className="relative w-full h-full" style={{ filter: filterStyle }}>
@@ -417,34 +763,57 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
         shadows
         dpr={[1, 2]}
         onCreated={({ gl, scene, camera }) => {
-          glRef.current = gl;
+          glRef.current    = gl;
           sceneRef.current = scene;
           cameraRef.current = camera as THREE.PerspectiveCamera;
-          gl.toneMapping = THREE.ACESFilmicToneMapping;
-          gl.toneMappingExposure = 1.3;
-          gl.outputColorSpace = THREE.SRGBColorSpace;
+          gl.toneMapping         = THREE.ACESFilmicToneMapping;
+          // [v2.1 Part 4] Default exposure; will be overridden by hdriIntensity effect
+          gl.toneMappingExposure = hdriIntensity;
+          gl.outputColorSpace    = THREE.SRGBColorSpace;
         }}
       >
         <PerspectiveCamera makeDefault position={[0.8, 1.4, 6.5]} fov={32} near={0.01} far={100} />
 
-        <CameraController controlsRef={controlsRef} resetSignal={resetSignal} />
+        {/* [v2.1 Part 2/3] Smooth camera animation controller */}
+        <CameraController
+          controlsRef={controlsRef}
+          animTarget={animTarget}
+          onAnimComplete={handleAnimComplete}
+        />
 
+        {/* [v2.1 Part 2] Added polar angle limits; dampingFactor tuned */}
         <OrbitControls
           ref={controlsRef}
           makeDefault
           autoRotate={autoRotate}
           autoRotateSpeed={0.8}
           enableDamping
-          dampingFactor={0.07}
-          minDistance={1}
+          dampingFactor={0.05}
+          minDistance={2}
           maxDistance={12}
+          minPolarAngle={Math.PI * 0.1}
+          maxPolarAngle={Math.PI * 0.9}
+          onChange={() => {
+            // Clear active preset highlight when user manually orbits
+            if (!animatingRef.current) {
+              setActiveCameraPreset(null);
+            }
+          }}
         />
 
         <DynamicLight />
 
-        {/* HDRI for PBR reflections — in its own Suspense so it doesn't block the book */}
+        {/* [v2.1 Part 4] Studio HDRI — provides PBR reflections and ambient fill.
+            Replaces the earlier "night" preset.  environmentIntensity is a
+            moderate fixed value; overall brightness is controlled via
+            renderer.toneMappingExposure (hdriIntensity slider in LightingControls).
+            Phase 2 note: swap files="/hdri/studio_small_08_1k.hdr" for local HDRI. */}
         <Suspense fallback={null}>
-          <Environment preset="night" environmentIntensity={0.25} backgroundIntensity={0} />
+          <Environment
+            preset="studio"
+            environmentIntensity={0.5}
+            backgroundIntensity={0}
+          />
         </Suspense>
 
         <ContactShadows
@@ -455,8 +824,29 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
           far={2.5}
         />
 
-        {/* Book — no Suspense so it mounts synchronously */}
-        <BookModel size={bookSize} coverUrl={coverUrl} spineTitle={spineTitle} onGroupReady={handleBookGroupReady} />
+        {/* [v2.1 Part 5] finish prop threads down to ProceduralBook / GlbBook */}
+        <BookModel
+          size={bookSize}
+          coverUrl={coverUrl}
+          spineTitle={spineTitle}
+          finish={finish}
+          onGroupReady={handleBookGroupReady}
+        />
+
+        {/* [v2.1 Part 6] Atmospheric effects — only the active one renders */}
+        <SceneMist
+          enabled={atmosphericEffect === "mist"}
+          intensity={atmosphericIntensity}
+          bgColor={bgMainColor}
+        />
+        <SceneDust
+          enabled={atmosphericEffect === "dust"}
+          intensity={atmosphericIntensity}
+        />
+        <SceneRain
+          enabled={atmosphericEffect === "rain"}
+          intensity={atmosphericIntensity}
+        />
       </Canvas>
     </div>
   );

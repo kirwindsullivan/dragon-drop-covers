@@ -1,5 +1,8 @@
 "use client";
 
+// [v2.1 Part 2] Removed onResetCamera prop and bottom camera controls bar —
+// Reset View and Auto-rotate are now in SafeZoneOverlay (canvas toolbar).
+
 import {
   Image as ImageIcon,
   Palette,
@@ -7,8 +10,6 @@ import {
   Sliders,
   Type,
   Download,
-  RotateCcw,
-  RotateCw,
 } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
 import { CoverDropzone } from "./CoverDropzone";
@@ -21,7 +22,6 @@ import type { ExportMode } from "@/types";
 
 interface SidePanelProps {
   onExport: (w: number, h: number, mode: ExportMode) => Promise<Blob | null>;
-  onResetCamera: () => void;
   getWatermarkPosition?: (w: number, h: number) => { x: number; y: number } | null;
 }
 
@@ -41,11 +41,9 @@ const ExportPanel = dynamic(() =>
   { ssr: false },
 );
 
-export function SidePanel({ onExport, onResetCamera, getWatermarkPosition }: SidePanelProps) {
+export function SidePanel({ onExport, getWatermarkPosition }: SidePanelProps) {
   const activePanel = useEditorStore((s) => s.activePanel);
   const setActivePanel = useEditorStore((s) => s.setActivePanel);
-  const autoRotate = useEditorStore((s) => s.autoRotate);
-  const setAutoRotate = useEditorStore((s) => s.setAutoRotate);
 
   return (
     <aside className="flex h-full w-80 flex-col border-l border-surface-3 bg-surface/80 backdrop-blur-md">
@@ -78,28 +76,6 @@ export function SidePanel({ onExport, onResetCamera, getWatermarkPosition }: Sid
         {activePanel === "export"     && <ExportPanel onExport={onExport} getWatermarkPosition={getWatermarkPosition} />}
       </div>
 
-      {/* Bottom camera controls */}
-      <div className="border-t border-surface-3 px-4 py-3 flex items-center gap-2">
-        <button
-          onClick={onResetCamera}
-          className="flex items-center gap-1.5 rounded-lg border border-surface-3 bg-surface-1 px-3 py-1.5 text-xs text-brand-200 hover:border-brand-600 transition-all"
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-          Reset View
-        </button>
-        <button
-          onClick={() => setAutoRotate(!autoRotate)}
-          className={cn(
-            "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-all",
-            autoRotate
-              ? "border-brand-500 bg-brand-900/60 text-brand-200"
-              : "border-surface-3 bg-surface-1 text-brand-300/60 hover:border-brand-600",
-          )}
-        >
-          <RotateCw className="h-3.5 w-3.5" />
-          Auto-Rotate
-        </button>
-      </div>
     </aside>
   );
 }

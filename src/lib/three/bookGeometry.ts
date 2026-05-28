@@ -45,41 +45,55 @@ export function buildProceduralBook(
   const group = new THREE.Group();
 
   // ─── Materials ───────────────────────────────────────────────────────────
-  const coverMat = new THREE.MeshStandardMaterial({
+  // [v2.1] Upgraded to MeshPhysicalMaterial so applyFinish() can set clearcoat
+  // without rebuilding.  Materials are named so traversal-based finish updates
+  // (BookScene) and Phase 2 GLTF integration can find them by name.
+  const coverMat = new THREE.MeshPhysicalMaterial({
+    name: "cover",
     map: coverTex ?? null,
-    roughness: isHard ? 0.6 : 0.75,
-    metalness: 0.02,
+    roughness: isHard ? 0.9 : 0.9,  // default matte; applyFinish overrides at runtime
+    metalness: 0.0,
+    clearcoat: 0.0,
+    clearcoatRoughness: 0.0,
     color: coverTex ? new THREE.Color(0xffffff) : new THREE.Color(0x7040c0),
     emissive: coverTex ? new THREE.Color(0) : new THREE.Color(0x2a0060),
     emissiveIntensity: coverTex ? 0 : 0.25,
     side: THREE.FrontSide,
   });
 
-  const spineMat = new THREE.MeshStandardMaterial({
+  const spineMat = new THREE.MeshPhysicalMaterial({
+    name: "spine",
     map: spineTex ?? null,
-    roughness: 0.7,
-    metalness: 0.01,
+    roughness: 0.9,
+    metalness: 0.0,
+    clearcoat: 0.0,
+    clearcoatRoughness: 0.0,
     color: spineTex ? new THREE.Color(0xffffff) : new THREE.Color(0x4422aa),
     emissive: spineTex ? new THREE.Color(0) : new THREE.Color(0x150030),
     emissiveIntensity: spineTex ? 0 : 0.2,
   });
 
-  const backMat = new THREE.MeshStandardMaterial({
+  const backMat = new THREE.MeshPhysicalMaterial({
+    name: "back",
     map: backTex ?? null,
-    roughness: isHard ? 0.6 : 0.75,
-    metalness: 0.02,
+    roughness: 0.9,
+    metalness: 0.0,
+    clearcoat: 0.0,
+    clearcoatRoughness: 0.0,
     color: backTex ? new THREE.Color(0xffffff) : new THREE.Color(0x4422aa),
     emissive: backTex ? new THREE.Color(0) : new THREE.Color(0x150030),
     emissiveIntensity: backTex ? 0 : 0.2,
   });
 
   const pageMat = new THREE.MeshStandardMaterial({
+    name: "pages",
     color: new THREE.Color(0xf0ead8),
     roughness: 0.92,
     metalness: 0.0,
   });
 
   const edgeMat = new THREE.MeshStandardMaterial({
+    name: "edge",
     color: new THREE.Color(0x6a5080),
     roughness: 0.75,
     metalness: 0.0,

@@ -12,12 +12,18 @@ import { useEditorStore } from "@/store/editorStore";
 export function useAutoSave(projectId: string | null) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const background = useEditorStore((s) => s.background);
-  const lighting = useEditorStore((s) => s.lighting);
-  const photo = useEditorStore((s) => s.photo);
-  const textOverlay = useEditorStore((s) => s.textOverlay);
-  const bookSize = useEditorStore((s) => s.bookSize);
-  const spineTitle = useEditorStore((s) => s.spineTitle);
+  const background          = useEditorStore((s) => s.background);
+  const lighting            = useEditorStore((s) => s.lighting);
+  const photo               = useEditorStore((s) => s.photo);
+  const textOverlay         = useEditorStore((s) => s.textOverlay);
+  const bookSize            = useEditorStore((s) => s.bookSize);
+  const spineTitle          = useEditorStore((s) => s.spineTitle);
+  // [v2.1] New scene settings
+  const finish              = useEditorStore((s) => s.finish);
+  const hdriIntensity       = useEditorStore((s) => s.hdriIntensity);
+  const atmosphericEffect   = useEditorStore((s) => s.atmosphericEffect);
+  const atmosphericIntensity = useEditorStore((s) => s.atmosphericIntensity);
+  const activeCameraPreset  = useEditorStore((s) => s.activeCameraPreset);
 
   useEffect(() => {
     if (!projectId) return;
@@ -37,6 +43,12 @@ export function useAutoSave(projectId: string | null) {
               adjustments: photo,
               overlayTitle: textOverlay.title,
               overlayTagline: textOverlay.tagline,
+              // [v2.1] New scene settings
+              finish,
+              hdriIntensity,
+              atmosphericEffect,
+              atmosphericIntensity,
+              activeCameraPreset,
             },
           }),
         });
@@ -48,5 +60,5 @@ export function useAutoSave(projectId: string | null) {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [projectId, background, lighting, photo, textOverlay, bookSize, spineTitle]);
+  }, [projectId, background, lighting, photo, textOverlay, bookSize, spineTitle, finish, hdriIntensity, atmosphericEffect, atmosphericIntensity, activeCameraPreset]);
 }

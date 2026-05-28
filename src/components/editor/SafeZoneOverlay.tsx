@@ -13,8 +13,12 @@
 // The component is placed as a direct child of the "relative flex-1 overflow-hidden"
 // viewport div in the builder page — it uses "absolute inset-0" to match that div.
 
+// [v2.1 Part 2] Reset View and Auto-rotate buttons moved here from SidePanel.
+// They live on the canvas overlay so they appear directly above the 3D viewport
+// without needing any prop-drilling.  Both use store actions directly.
+
 import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
-import { Grid3X3 } from "lucide-react";
+import { Grid3X3, RotateCcw, RefreshCw } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
 import { EXPORT_PRESETS, SAFE_ZONE_PADDING } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -45,6 +49,10 @@ export function SafeZoneOverlay() {
   const exportPresetId = useEditorStore((s) => s.exportPresetId);
   const showGrid       = useEditorStore((s) => s.showRuleOfThirds);
   const setShowGrid    = useEditorStore((s) => s.setShowRuleOfThirds);
+  // [v2.1 Part 2]
+  const autoRotate    = useEditorStore((s) => s.autoRotate);
+  const setAutoRotate = useEditorStore((s) => s.setAutoRotate);
+  const animateCamera = useEditorStore((s) => s.animateCamera);
 
   const wrapRef   = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -193,25 +201,60 @@ export function SafeZoneOverlay() {
 
   return (
     // pointer-events: none so OrbitControls on the Three.js canvas still works
-    <div ref={wrapRef} className="absolute inset-0 pointer-events-none">
+    // z-[10] keeps this above TextOverlayCanvas (z-[5])
+    <div ref={wrapRef} className="absolute inset-0 pointer-events-none z-[10]">
       <canvas ref={canvasRef} className="absolute inset-0" />
 
-      {/* Grid toggle button — needs pointer events, sits in the corner */}
-      <button
-        onClick={() => setShowGrid(!showGrid)}
-        className={cn(
-          "pointer-events-auto absolute bottom-16 right-4",
-          "flex items-center gap-2 rounded-lg border px-3 h-9 transition-all",
-          showGrid
-            ? "border-brand-500 bg-brand-900/80 text-brand-300"
-            : "border-white/20 bg-black/40 text-white/50 hover:border-white/40 hover:text-white/80",
-        )}
-        title="Toggle rule-of-thirds grid"
-        aria-label="Toggle rule-of-thirds grid"
-      >
-        <Grid3X3 className="h-4 w-4 shrink-0" />
-        <span className="text-xs font-medium">Grid</span>
-      </button>
+      {/* ── Canvas toolbar — bottom-right corner ───────────────────────── */}
+      <div className="pointer-events-auto absolute bottom-4 right-4 flex flex-col gap-2">
+
+        {/* [v2.1 Part 2] Reset View button */}
+        <button
+          onClick={() => animateCamera("hero")}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-3 h-9 transition-all",
+            "border-white/20 bg-black/40 text-white/50 hover:border-white/40 hover:text-white/80",
+          )}
+          title="Reset camera to default angle"
+          aria-label="Reset camera view"
+        >
+          <RotateCcw className="h-4 w-4 shrink-0" />
+          <span className="text-xs font-medium">Reset</span>
+        </button>
+
+        {/* [v2.1 Part 2] Auto-rotate toggle */}
+        <button
+          onClick={() => setAutoRotate(!autoRotate)}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-3 h-9 transition-all",
+            autoRotate
+              ? "border-brand-500 bg-brand-900/80 text-brand-300"
+              : "border-white/20 bg-black/40 text-white/50 hover:border-white/40 hover:text-white/80",
+          )}
+          title="Toggle auto-rotate"
+          aria-label="Toggle auto-rotate"
+        >
+          <RefreshCw className={cn("h-4 w-4 shrink-0", autoRotate && "animate-spin [animation-duration:3s]")} />
+          <span className="text-xs font-medium">Rotate</span>
+        </button>
+
+        {/* Grid toggle button */}
+        <button
+          onClick={() => setShowGrid(!showGrid)}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-3 h-9 transition-all",
+            showGrid
+              ? "border-brand-500 bg-brand-900/80 text-brand-300"
+              : "border-white/20 bg-black/40 text-white/50 hover:border-white/40 hover:text-white/80",
+          )}
+          title="Toggle rule-of-thirds grid"
+          aria-label="Toggle rule-of-thirds grid"
+        >
+          <Grid3X3 className="h-4 w-4 shrink-0" />
+          <span className="text-xs font-medium">Grid</span>
+        </button>
+
+      </div>
     </div>
   );
 }
