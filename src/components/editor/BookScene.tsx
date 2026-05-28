@@ -697,7 +697,7 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
 
       {/* [v2.1 Phase 2] GLB loading overlay — semi-transparent, non-blocking */}
       {gltfLoading && (
-        <div className="pointer-events-none absolute inset-0 z-[15] flex items-center justify-center bg-black/45">
+        <div className="pointer-events-none absolute inset-0 z-[15] flex items-center justify-center bg-black/60">
           <div className="flex flex-col items-center gap-3">
             <svg
               className="h-8 w-8 animate-spin text-brand-400"

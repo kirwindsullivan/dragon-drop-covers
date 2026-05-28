@@ -58,7 +58,7 @@ export const BOOK_SIZE_LABELS: Record<string, string> = {
 export const CAMERA_PRESETS = [
   {
     id:          "hero",
-    position:    [2.5,  1.2,  4.5] as [number, number, number],
+    position:    [2.5,  1.2,  5.0] as [number, number, number],
     target:      [0,    0,    0  ] as [number, number, number],
     label:       "Hero",
     icon:        "⭐",
@@ -113,12 +113,13 @@ export const MODEL_MAP: Record<BookSize, string> = {
 // Tune values here after visual inspection — they intentionally use easy-to-read
 // multipliers rather than exact physical-to-unit ratios.
 // Depth (z) drives spine thickness; xy drive cover proportions.
+// [Fix session] Values calibrated after confirming GLTF models load at ~3× over-scale.
 export const SCALE_MAP: Record<BookSize, [number, number, number]> = {
-  hardcover: [1.0,  1.0,  1.0 ],
-  softcover: [1.0,  1.0,  0.7 ],
-  digest:    [0.92, 0.94, 0.5 ],
-  zine:      [0.92, 0.94, 0.15],
-  letter:    [1.42, 1.22, 1.0 ],
+  hardcover: [0.35, 0.35, 0.35],
+  softcover: [0.35, 0.35, 0.25],
+  digest:    [0.30, 0.32, 0.18],
+  zine:      [0.30, 0.32, 0.05],
+  letter:    [0.42, 0.44, 0.35],
 };
 
 // Watermark anchor in book group local space (lower-right area of front face).

@@ -159,10 +159,9 @@ function getUVRegions(geo: THREE.BufferGeometry): {
 //   • Cover art drawn in the front UV island (detected via getUVRegions)
 //   • Spine gradient drawn in the spine UV island
 //
-// UV convention: Three.js UV V=0 is at the bottom; canvas Y=0 is at the top,
-// so we map canvas_y = (1 - v) * SIZE when placing content.
-//
-// flipY=true matches the Phase 1 convention used for all user-uploaded cover textures.
+// UV convention: GLTF V=0 is at the TOP of the image (same as canvas Y=0).
+// With flipY=false we do NOT flip on GPU upload, so canvas_y = v * SIZE directly.
+// (The Phase 1 procedural book used flipY=true + an inverted formula; GLTF is different.)
 
 async function buildCompositeTexture(
   imgUrl: string,
@@ -189,8 +188,9 @@ async function buildCompositeTexture(
 
       // Step 2 — cover art in the detected front UV island
       if (front) {
+        // GLTF UV: V=0 at top → canvas_y = v * S (no inversion needed)
         const cx = Math.round(front.u0 * S);
-        const cy = Math.round((1 - front.v1) * S);   // flip V for canvas Y
+        const cy = Math.round(front.v0 * S);
         const cw = Math.max(1, Math.round((front.u1 - front.u0) * S));
         const ch = Math.max(1, Math.round((front.v1 - front.v0) * S));
         ctx.drawImage(img, cx, cy, cw, ch);
@@ -204,14 +204,15 @@ async function buildCompositeTexture(
       if (spine) {
         const spineCv = generateSpineTexture(img, spineTitle, S, S);
         const cx = Math.round(spine.u0 * S);
-        const cy = Math.round((1 - spine.v1) * S);
+        const cy = Math.round(spine.v0 * S);
         const cw = Math.max(1, Math.round((spine.u1 - spine.u0) * S));
         const ch = Math.max(1, Math.round((spine.v1 - spine.v0) * S));
         ctx.drawImage(spineCv, cx, cy, cw, ch);
       }
 
       const tex = new THREE.CanvasTexture(canvas);
-      tex.flipY       = true;                       // matches Phase 1 cover texture convention
+      // flipY=false: GLTF UV V=0 is at image top, same as canvas origin — no flip needed.
+      tex.flipY       = false;
       tex.wrapS       = THREE.ClampToEdgeWrapping;
       tex.wrapT       = THREE.ClampToEdgeWrapping;
       tex.colorSpace  = THREE.SRGBColorSpace;
@@ -225,25 +226,44 @@ async function buildCompositeTexture(
 }
 
 // ─── Find cover mesh in a cloned group ────────────────────────────────────────
+// NOTE: GLTFLoader creates MeshStandardMaterial for standard PBR materials.
+// MeshPhysicalMaterial (clearcoat etc.) is only used when the GLB uses extensions
+// like KHR_materials_clearcoat.  We must accept MeshStandardMaterial here and
+// upgrade to MeshPhysicalMaterial inside buildCoverMaterial.
 
 function findCoverEntry(
   group: THREE.Group,
   bookSize: BookSize,
-): { mat: THREE.MeshPhysicalMaterial; mesh: THREE.Mesh } | null {
+): { mat: THREE.MeshStandardMaterial; mesh: THREE.Mesh } | null {
   const target = COVER_MAT_NAME[bookSize];
-  let result: { mat: THREE.MeshPhysicalMaterial; mesh: THREE.Mesh } | null = null;
+  let result: { mat: THREE.MeshStandardMaterial; mesh: THREE.Mesh } | null = null;
   group.traverse((node) => {
     if (result) return;
     const mesh = node as THREE.Mesh;
     if (!mesh.isMesh) return;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
-      if (m?.name === target && m instanceof THREE.MeshPhysicalMaterial) {
-        result = { mat: m, mesh };
+      // MeshPhysicalMaterial extends MeshStandardMaterial — this check matches both
+      if (m?.name === target && m instanceof THREE.MeshStandardMaterial) {
+        result = { mat: m as THREE.MeshStandardMaterial, mesh };
         break;
       }
     }
   });
+  if (!result) {
+    // Log what material names are actually present to aid tuning
+    const names: string[] = [];
+    group.traverse((node) => {
+      const mesh = node as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      mats.forEach((m) => { if (m?.name) names.push(m.name); });
+    });
+    console.warn(
+      `[useBookModel] Cover material "${target}" not found in GLB for ${bookSize}.`,
+      `Present material names: [${[...new Set(names)].join(", ")}]`,
+    );
+  }
   return result;
 }
 
@@ -307,8 +327,8 @@ function setupModelMaterials(group: THREE.Group, bookSize: BookSize): void {
 }
 
 // ─── Apply cover texture to a fresh clone ────────────────────────────────────
-// Clones the cover material (so the cache isn't mutated), applies composite or
-// simple cover texture, and returns the cloned material.
+// Upgrades MeshStandardMaterial → MeshPhysicalMaterial (needed for applyFinish /
+// clearcoat), applies composite or simple cover texture, and returns the new material.
 
 async function buildCoverMaterial(
   group: THREE.Group,
@@ -319,12 +339,30 @@ async function buildCoverMaterial(
   const entry = findCoverEntry(group, bookSize);
   if (!entry) return null;
 
-  // Clone so we don't mutate the cached GLTF's shared material
-  const cloned = entry.mat.clone() as THREE.MeshPhysicalMaterial;
-  cloned.name          = entry.mat.name;
+  // Upgrade to MeshPhysicalMaterial so applyFinish (clearcoat) works.
+  // GLTFLoader creates MeshStandardMaterial for standard PBR — Physical is a superset.
+  let cloned: THREE.MeshPhysicalMaterial;
+  if (entry.mat instanceof THREE.MeshPhysicalMaterial) {
+    cloned = entry.mat.clone() as THREE.MeshPhysicalMaterial;
+    cloned.name = entry.mat.name;
+  } else {
+    cloned = new THREE.MeshPhysicalMaterial({
+      name:            entry.mat.name,
+      color:           entry.mat.color.clone(),
+      roughness:       entry.mat.roughness,
+      metalness:       entry.mat.metalness,
+      map:             entry.mat.map,
+      normalMap:       entry.mat.normalMap,
+      normalScale:     entry.mat.normalScale?.clone(),
+      envMapIntensity: entry.mat.envMapIntensity,
+    });
+    console.log(
+      `[useBookModel] Upgraded "${entry.mat.name}" MeshStandardMaterial → MeshPhysicalMaterial`,
+    );
+  }
   cloned.userData.ours = true;
 
-  // Replace on mesh
+  // Replace on mesh (entry.mesh is in our clone — safe to mutate)
   if (Array.isArray(entry.mesh.material)) {
     const idx = (entry.mesh.material as THREE.Material[]).indexOf(entry.mat);
     if (idx >= 0) {
@@ -347,12 +385,13 @@ async function buildCoverMaterial(
   }
 
   // Fallback: plain cover texture (front face will be correct; spine/back show UV edges)
+  // flipY=false: GLTF UV convention has V=0 at top-of-image, same as canvas/image origin.
   if (!tex) {
     tex = await new Promise<THREE.Texture | null>((resolve) => {
       new THREE.TextureLoader().load(
         coverUrl,
         (t) => {
-          t.flipY         = true;
+          t.flipY         = false;
           t.wrapS         = THREE.ClampToEdgeWrapping;
           t.wrapT         = THREE.ClampToEdgeWrapping;
           t.colorSpace    = THREE.SRGBColorSpace;
@@ -490,7 +529,8 @@ export function useBookModel(
           new THREE.TextureLoader().load(
             coverUrl,
             (t) => {
-              t.flipY         = true;
+              // flipY=false: GLTF UV convention V=0 at top matches image origin
+              t.flipY         = false;
               t.wrapS         = THREE.ClampToEdgeWrapping;
               t.wrapT         = THREE.ClampToEdgeWrapping;
               t.colorSpace    = THREE.SRGBColorSpace;
@@ -505,10 +545,13 @@ export function useBookModel(
 
       if (cancelled || !newTex) return;
 
+      const currentMat = coverMatRef.current;
+      if (!currentMat) return; // model may have swapped mid-flight
+
       // Dispose previous texture if it was ours
-      if (mat.map?.userData.ours) mat.map.dispose();
-      mat.map = newTex;
-      mat.needsUpdate = true;
+      if (currentMat.map?.userData.ours) currentMat.map.dispose();
+      currentMat.map = newTex;
+      currentMat.needsUpdate = true;
     };
 
     void run();
