@@ -71,8 +71,14 @@ async function loadGltf(path: string): Promise<GLTF> {
 // ─── Disposal ─────────────────────────────────────────────────────────────────
 // Only dispose materials + textures tagged userData.ours=true.
 // Geometries are shared with the cache — never disposed here.
+//
+// IMPORTANT: never call disposeClone while the group is still in the R3F scene
+// graph (<primitive> is mounted).  Always defer via requestAnimationFrame so
+// React's commit phase removes the primitive before disposal — otherwise the
+// WebGL renderer tries to render with freed resources and loses context.
 
 function disposeClone(group: THREE.Group): void {
+  console.log("[useBookModel] disposing model clone");
   group.traverse((node) => {
     const mesh = node as THREE.Mesh;
     if (!mesh.isMesh) return;
@@ -348,10 +354,9 @@ async function buildCoverMaterial(
   } else {
     cloned = new THREE.MeshPhysicalMaterial({
       name:            entry.mat.name,
-      color:           entry.mat.color.clone(),
+      // color and map are set to neutral below — do not copy GLB baked values
       roughness:       entry.mat.roughness,
       metalness:       entry.mat.metalness,
-      map:             entry.mat.map,
       normalMap:       entry.mat.normalMap,
       normalScale:     entry.mat.normalScale?.clone(),
       envMapIntensity: entry.mat.envMapIntensity,
@@ -360,6 +365,14 @@ async function buildCoverMaterial(
       `[useBookModel] Upgraded "${entry.mat.name}" MeshStandardMaterial → MeshPhysicalMaterial`,
     );
   }
+
+  // ── Neutral placeholder ──────────────────────────────────────────────────────
+  // The GLB has the artist's test/cover art baked into its base color texture.
+  // Always clear it so the model shows a clean mid-gray when no cover is uploaded.
+  // color is reset to white (#ffffff) once a user texture is applied so it
+  // renders at full brightness (color acts as a tint multiplier on the texture).
+  cloned.map = null;
+  cloned.color.set("#888888");
   cloned.userData.ours = true;
 
   // Replace on mesh (entry.mesh is in our clone — safe to mutate)
@@ -374,6 +387,7 @@ async function buildCoverMaterial(
     entry.mesh.material = cloned;
   }
 
+  // No cover — return the neutral gray placeholder
   if (!coverUrl) return cloned;
 
   // Try composite (cover art in front UV island + spine/back sampled colors)
@@ -405,6 +419,8 @@ async function buildCoverMaterial(
   }
 
   if (tex) {
+    // Reset color to white so the texture renders at full brightness (no gray tint)
+    cloned.color.set("#ffffff");
     cloned.map = tex;
     cloned.needsUpdate = true;
   }
@@ -445,6 +461,7 @@ export function useBookModel(
     let cancelled = false;
 
     const run = async () => {
+      console.log("[useBookModel] loading model:", path);
       try {
         const gltf  = await loadGltf(path);
         if (cancelled) return;
@@ -459,7 +476,7 @@ export function useBookModel(
         // Per-model material setup (clear AO, assign Page material where needed, etc.)
         setupModelMaterials(group, bookSize);
 
-        // Build (or re-apply) cover material
+        // Build (or re-apply) cover material with neutral placeholder
         const coverMat = await buildCoverMaterial(
           group,
           bookSize,
@@ -475,14 +492,19 @@ export function useBookModel(
         // Apply current finish to cover material
         if (coverMat) applyFinish(coverMat, finishRef.current);
 
-        // Dispose previous clone
+        // Swap refs first, then commit state.
+        // Defer disposing the old clone with requestAnimationFrame so React's
+        // commit phase can unmount the old <primitive> before we free its
+        // materials — disposing while R3F is still rendering causes context loss.
         const prev = groupRef.current;
-        if (prev) disposeClone(prev);
-
         groupRef.current    = group;
         coverMatRef.current = coverMat;
 
         setResult({ group, coverMaterial: coverMat, isLoading: false, error: null });
+
+        if (prev) {
+          requestAnimationFrame(() => { disposeClone(prev); });
+        }
 
       } catch (err) {
         if (!cancelled) {
@@ -505,6 +527,7 @@ export function useBookModel(
     if (!coverUrl) {
       if (mat.map?.userData.ours) mat.map.dispose();
       mat.map = null;
+      mat.color.set("#888888"); // restore neutral gray placeholder
       mat.needsUpdate = true;
       return;
     }
@@ -550,6 +573,8 @@ export function useBookModel(
 
       // Dispose previous texture if it was ours
       if (currentMat.map?.userData.ours) currentMat.map.dispose();
+      // Reset color to white so the texture renders at full brightness (no gray tint)
+      currentMat.color.set("#ffffff");
       currentMat.map = newTex;
       currentMat.needsUpdate = true;
     };
