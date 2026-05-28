@@ -373,6 +373,11 @@ async function buildCoverMaterial(
   // renders at full brightness (color acts as a tint multiplier on the texture).
   cloned.map = null;
   cloned.color.set("#888888");
+  // Temporary: clear the incorrectly baked normal map from the cover material only.
+  // Page block mesh normal maps are unaffected (separate materials, not touched here).
+  // Remove once the artist delivers correctly baked normal maps.
+  cloned.normalMap = null;
+  cloned.needsUpdate = true;
   cloned.userData.ours = true;
 
   // Replace on mesh (entry.mesh is in our clone — safe to mutate)
