@@ -160,14 +160,12 @@ function getUVRegions(geo: THREE.BufferGeometry): {
 }
 
 // ─── Composite canvas texture ─────────────────────────────────────────────────
-// Generates a single 1024×1024 CanvasTexture:
-//   • Back gradient fills the whole canvas (algorithmically sampled from cover image)
-//   • Cover art drawn in the front UV island (detected via getUVRegions)
-//   • Spine gradient drawn in the spine UV island
-//
-// UV convention: GLTF V=0 is at the TOP of the image (same as canvas Y=0).
-// With flipY=false we do NOT flip on GPU upload, so canvas_y = v * SIZE directly.
-// (The Phase 1 procedural book used flipY=true + an inverted formula; GLTF is different.)
+// DISABLED — vertex-position UV bucketing was calibrated for BoxGeometry and
+// produces incorrect face mapping on the GLTF models (cover art lands on the
+// spine/top-edge faces instead of the front face).
+// Retained for future reimplementation once the artist provides confirmed UV
+// island bounds or a UV atlas map per model.
+// Active code path: direct TextureLoader in buildCoverMaterial / Effect 2.
 
 async function buildCompositeTexture(
   imgUrl: string,
@@ -395,33 +393,25 @@ async function buildCoverMaterial(
   // No cover — return the neutral gray placeholder
   if (!coverUrl) return cloned;
 
-  // Try composite (cover art in front UV island + spine/back sampled colors)
-  let tex: THREE.Texture | null = null;
-  try {
-    tex = await buildCompositeTexture(coverUrl, entry.mesh, spineTitle);
-  } catch (err) {
-    console.warn("[useBookModel] Composite texture failed:", err);
-  }
-
-  // Fallback: plain cover texture (front face will be correct; spine/back show UV edges)
-  // flipY=false: GLTF UV convention has V=0 at top-of-image, same as canvas/image origin.
-  if (!tex) {
-    tex = await new Promise<THREE.Texture | null>((resolve) => {
-      new THREE.TextureLoader().load(
-        coverUrl,
-        (t) => {
-          t.flipY         = false;
-          t.wrapS         = THREE.ClampToEdgeWrapping;
-          t.wrapT         = THREE.ClampToEdgeWrapping;
-          t.colorSpace    = THREE.SRGBColorSpace;
-          t.userData.ours = true;
-          resolve(t);
-        },
-        undefined,
-        () => resolve(null),
-      );
-    });
-  }
+  // TODO: Implement composite UV texture for spine/back color sampling
+  // once UV island bounds are confirmed for each model.
+  // Currently applying cover texture directly to material.
+  const tex = await new Promise<THREE.Texture | null>((resolve) => {
+    new THREE.TextureLoader().load(
+      coverUrl,
+      (t) => {
+        // flipY=false: GLTF UV convention has V=0 at top-of-image
+        t.flipY         = false;
+        t.wrapS         = THREE.ClampToEdgeWrapping;
+        t.wrapT         = THREE.ClampToEdgeWrapping;
+        t.colorSpace    = THREE.SRGBColorSpace;
+        t.userData.ours = true;
+        resolve(t);
+      },
+      undefined,
+      () => resolve(null),
+    );
+  });
 
   if (tex) {
     // Reset color to white so the texture renders at full brightness (no gray tint)
@@ -539,37 +529,25 @@ export function useBookModel(
 
     let cancelled = false;
     const run = async () => {
-      // Re-find cover mesh in current group for UV inspection
-      const group = groupRef.current;
-      let newTex: THREE.Texture | null = null;
-
-      if (group) {
-        try {
-          const entry = findCoverEntry(group, bookSizeRef.current);
-          if (entry) {
-            newTex = await buildCompositeTexture(coverUrl, entry.mesh, spineTitleRef.current);
-          }
-        } catch { /* fall through to simple texture */ }
-      }
-
-      if (!newTex) {
-        newTex = await new Promise<THREE.Texture | null>((resolve) => {
-          new THREE.TextureLoader().load(
-            coverUrl,
-            (t) => {
-              // flipY=false: GLTF UV convention V=0 at top matches image origin
-              t.flipY         = false;
-              t.wrapS         = THREE.ClampToEdgeWrapping;
-              t.wrapT         = THREE.ClampToEdgeWrapping;
-              t.colorSpace    = THREE.SRGBColorSpace;
-              t.userData.ours = true;
-              resolve(t);
-            },
-            undefined,
-            () => resolve(null),
-          );
-        });
-      }
+      // TODO: Implement composite UV texture for spine/back color sampling
+      // once UV island bounds are confirmed for each model.
+      // Currently applying cover texture directly to material.
+      const newTex = await new Promise<THREE.Texture | null>((resolve) => {
+        new THREE.TextureLoader().load(
+          coverUrl,
+          (t) => {
+            // flipY=false: GLTF UV convention has V=0 at top-of-image
+            t.flipY         = false;
+            t.wrapS         = THREE.ClampToEdgeWrapping;
+            t.wrapT         = THREE.ClampToEdgeWrapping;
+            t.colorSpace    = THREE.SRGBColorSpace;
+            t.userData.ours = true;
+            resolve(t);
+          },
+          undefined,
+          () => resolve(null),
+        );
+      });
 
       if (cancelled || !newTex) return;
 
