@@ -1,20 +1,25 @@
 "use client";
 
 // [Sessions 1–5] 3D book scene: procedural geometry, OrbitControls, export.
-// [v2.1] Additions — nothing removed:
+// [v2.1 Phase 1] Additions — nothing removed:
 //   Part 1: tex.flipY = true (was false) + ClampToEdgeWrapping
 //   Part 2: polar angle limits; smooth 600ms camera animation for reset
 //   Part 3: camera preset animation via _cameraAnimVersion / activeCameraPreset store
 //   Part 4: Environment "studio" HDRI; dynamic toneMappingExposure via hdriIntensity
 //   Part 5: MeshPhysicalMaterial traversal + applyFinish on finish change
 //   Part 6: Atmospheric effects — Mist (FogExp2), Dust, Rain (Points systems)
+// [v2.1 Phase 2] GLTF model integration:
+//   • useBookModel hook replaces GlbBook + BookModel placeholder components
+//   • ProceduralBook kept as fallback on GLB load error
+//   • Loading overlay shown during model load / size switch
+//   • WATERMARK_COVER_LOCAL moved to constants.ts for easy tuning
+//   • All Phase 1 features (lighting, HDRI, atmospheric effects, camera) unchanged
 
 import { Suspense, useRef, useEffect, useState, useCallback, useLayoutEffect } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import {
   OrbitControls,
   ContactShadows,
-  useGLTF,
   PerspectiveCamera,
   Environment,
 } from "@react-three/drei";
@@ -23,23 +28,18 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 
 import { useEditorStore } from "@/store/editorStore";
 import { padToLightPosition } from "@/lib/three/lightingMath";
-import { buildProceduralBook, BOOK_DIMS } from "@/lib/three/bookGeometry";
+import { buildProceduralBook } from "@/lib/three/bookGeometry";
 import {
   generateSpineTexture,
   generateBackTexture,
 } from "@/lib/three/spineGenerator";
-import { SAFE_ZONE_PADDING, CAMERA_PRESETS } from "@/lib/constants";
+import { SAFE_ZONE_PADDING, CAMERA_PRESETS, WATERMARK_COVER_LOCAL } from "@/lib/constants";
 import { applyFinish } from "@/utils/applyFinish";
+import { useBookModel } from "@/hooks/useBookModel";
 import type { BookSize, FinishType } from "@/types";
 
-// ─── GLB model paths — drop a .glb here and it auto-maps ─────────────────────
-const MODEL_PATHS: Partial<Record<BookSize, string>> = {
-  // hardcover: "/models/hardcover.glb",
-  // softcover: "/models/softcover.glb",
-  // digest:    "/models/digest.glb",
-  // zine:      "/models/zine.glb",
-  // letter:    "/models/letter.glb",
-};
+// [v2.1 Phase 2] MODEL_PATHS stub removed — useBookModel + MODEL_MAP in constants.ts
+// handles all routing.  ProceduralBook below remains as GLB-error fallback.
 
 // ─── Procedural book component ───────────────────────────────────────────────
 function ProceduralBook({
@@ -153,82 +153,8 @@ function ProceduralBook({
   return <primitive object={group} />;
 }
 
-// ─── GLB-loaded book component ────────────────────────────────────────────────
-function GlbBook({
-  path,
-  coverUrl,
-  finish,
-  onGroupReady,
-}: {
-  path: string;
-  coverUrl: string | null;
-  finish: FinishType;
-  onGroupReady?: (g: THREE.Group) => void;
-}) {
-  const { scene } = useGLTF(path);
-  const cloned = scene.clone(true);
-
-  useEffect(() => {
-    onGroupReady?.(cloned as unknown as THREE.Group);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (!coverUrl) return;
-    const loader = new THREE.TextureLoader();
-    loader.load(coverUrl, (tex) => {
-      // [v2.1 Part 1] flipY correction + clamp wrapping
-      tex.flipY  = true;
-      tex.wrapS  = THREE.ClampToEdgeWrapping;
-      tex.wrapT  = THREE.ClampToEdgeWrapping;
-      tex.colorSpace = THREE.SRGBColorSpace;
-      cloned.traverse((node) => {
-        if ((node as THREE.Mesh).isMesh) {
-          const mesh = node as THREE.Mesh;
-          const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-          if (mat && (mat as THREE.MeshStandardMaterial).name?.toLowerCase().includes("cover")) {
-            (mat as THREE.MeshStandardMaterial).map = tex;
-            mat.needsUpdate = true;
-          }
-        }
-      });
-    });
-  }, [coverUrl, cloned]);
-
-  // [v2.1 Part 5] Apply finish to GLTF cover materials (Phase 2 path)
-  useEffect(() => {
-    cloned.traverse((node) => {
-      if (!(node as THREE.Mesh).isMesh) return;
-      const mesh = node as THREE.Mesh;
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      mats.forEach((m) => {
-        if (
-          m instanceof THREE.MeshPhysicalMaterial &&
-          (m.name === "cover" || m.name === "spine" || m.name === "back")
-        ) {
-          applyFinish(m, finish);
-        }
-      });
-    });
-  }, [finish, cloned]);
-
-  return <primitive object={cloned} />;
-}
-
-// ─── Book switcher ────────────────────────────────────────────────────────────
-function BookModel({
-  size, coverUrl, spineTitle, finish, onGroupReady,
-}: {
-  size: BookSize;
-  coverUrl: string | null;
-  spineTitle: string;
-  finish: FinishType;
-  onGroupReady?: (g: THREE.Group) => void;
-}) {
-  const glbPath = MODEL_PATHS[size];
-  if (glbPath) return <GlbBook path={glbPath} coverUrl={coverUrl} finish={finish} onGroupReady={onGroupReady} />;
-  return <ProceduralBook size={size} coverUrl={coverUrl} spineTitle={spineTitle} finish={finish} onGroupReady={onGroupReady} />;
-}
+// GlbBook and BookModel removed — replaced by useBookModel hook + <primitive> in BookScene.
+// ProceduralBook above is the fallback rendered when the GLB fails to load.
 
 // ─── Dynamic lighting ─────────────────────────────────────────────────────────
 function DynamicLight() {
@@ -570,8 +496,7 @@ function cropCenter(
   });
 }
 
-// ─── Watermark anchor ─────────────────────────────────────────────────────────
-const WATERMARK_COVER_LOCAL = new THREE.Vector3(0.4, -0.6, 0.22);
+// [v2.1 Phase 2] WATERMARK_COVER_LOCAL moved to constants.ts for easy tuning.
 
 // ─── Main scene export ────────────────────────────────────────────────────────
 export interface BookSceneHandle {
@@ -597,12 +522,24 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
   const setActiveCameraPreset = useEditorStore((s) => s.setActiveCameraPreset);
   const animateCamera      = useEditorStore((s) => s.animateCamera);
 
+  // [v2.1 Phase 2] GLTF model loading via hook (called outside Canvas — no R3F context needed)
+  const {
+    group:         gltfGroup,
+    isLoading:     gltfLoading,
+    error:         gltfError,
+  } = useBookModel(bookSize, coverUrl, spineTitle, finish);
+
   const controlsRef   = useRef<OrbitControlsImpl>(null);
   const glRef         = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef      = useRef<THREE.Scene | null>(null);
   const cameraRef     = useRef<THREE.PerspectiveCamera | null>(null);
   const bookGroupRef  = useRef<THREE.Group | null>(null);
   const animatingRef  = useRef(false);
+
+  // Keep bookGroupRef in sync with whichever model is active (GLTF or procedural fallback)
+  useEffect(() => {
+    if (gltfGroup) bookGroupRef.current = gltfGroup;
+  }, [gltfGroup]);
 
   // [v2.1 Part 2/3] Camera animation target (drives CameraController)
   const [animTarget, setAnimTarget] = useState<AnimTarget | null>(null);
@@ -673,7 +610,7 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
       renderH = Math.round(renderW / previewAspect);
     }
 
-    const worldPoint = WATERMARK_COVER_LOCAL.clone();
+    const worldPoint = new THREE.Vector3(...WATERMARK_COVER_LOCAL);
     group.updateWorldMatrix(true, false);
     worldPoint.applyMatrix4(group.matrixWorld);
     worldPoint.project(cam);
@@ -758,6 +695,29 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
         />
       )}
 
+      {/* [v2.1 Phase 2] GLB loading overlay — semi-transparent, non-blocking */}
+      {gltfLoading && (
+        <div className="pointer-events-none absolute inset-0 z-[15] flex items-center justify-center bg-black/45">
+          <div className="flex flex-col items-center gap-3">
+            <svg
+              className="h-8 w-8 animate-spin text-brand-400"
+              viewBox="0 0 24 24" fill="none"
+            >
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a10 10 0 100 10z" />
+            </svg>
+            <p className="text-sm font-medium text-brand-200">Loading model…</p>
+          </div>
+        </div>
+      )}
+
+      {/* [v2.1 Phase 2] GLB error toast — shown when fallback is active */}
+      {gltfError && (
+        <div className="pointer-events-none absolute bottom-20 left-1/2 z-[15] -translate-x-1/2 rounded-lg border border-amber-700/40 bg-amber-950/80 px-4 py-2 text-xs text-amber-300">
+          Using preview mode — model unavailable
+        </div>
+      )}
+
       <Canvas
         gl={{ antialias: true, preserveDrawingBuffer: true, alpha: true }}
         shadows
@@ -824,14 +784,22 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
           far={2.5}
         />
 
-        {/* [v2.1 Part 5] finish prop threads down to ProceduralBook / GlbBook */}
-        <BookModel
-          size={bookSize}
-          coverUrl={coverUrl}
-          spineTitle={spineTitle}
-          finish={finish}
-          onGroupReady={handleBookGroupReady}
-        />
+        {/* [v2.1 Phase 2] GLTF model (primary) or ProceduralBook (GLB error fallback).
+            gltfGroup is created outside the Canvas by useBookModel and added to the
+            R3F scene graph via <primitive>.  bookGroupRef tracks whichever is active
+            for watermark projection; see useEffect above. */}
+        {gltfGroup && !gltfError && (
+          <primitive object={gltfGroup} />
+        )}
+        {(!gltfGroup || gltfError) && !gltfLoading && (
+          <ProceduralBook
+            size={bookSize}
+            coverUrl={coverUrl}
+            spineTitle={spineTitle}
+            finish={finish}
+            onGroupReady={handleBookGroupReady}
+          />
+        )}
 
         {/* [v2.1 Part 6] Atmospheric effects — only the active one renders */}
         <SceneMist

@@ -1,4 +1,4 @@
-import type { BackgroundPreset, ExportPreset } from "@/types";
+import type { BackgroundPreset, ExportPreset, BookSize } from "@/types";
 
 export const BACKGROUND_PRESETS: BackgroundPreset[] = [
   { id: "arcane-night",   name: "Arcane Night",   mode: "gradient", value: "#0d001a", value2: "#1a0040", angle: 135 },
@@ -97,6 +97,35 @@ export const CAMERA_PRESETS = [
     description: "Top-down flat lay",
   },
 ] as const;
+
+// ─── [v2.1 Phase 2] GLTF model map ───────────────────────────────────────────
+// Maps each book size to its GLB path.  digest and letter reuse existing models;
+// visual proportions are corrected by SCALE_MAP below.
+export const MODEL_MAP: Record<BookSize, string> = {
+  hardcover: "/models/Hardcover.glb",
+  softcover: "/models/Softcover.glb",
+  digest:    "/models/Softcover.glb",   // Softcover GLB scaled for digest dimensions
+  zine:      "/models/Zine.glb",
+  letter:    "/models/Hardcover.glb",   // Hardcover GLB scaled for letter dimensions
+};
+
+// Per-size scale applied to the loaded THREE.Group (x, y, z).
+// Tune values here after visual inspection — they intentionally use easy-to-read
+// multipliers rather than exact physical-to-unit ratios.
+// Depth (z) drives spine thickness; xy drive cover proportions.
+export const SCALE_MAP: Record<BookSize, [number, number, number]> = {
+  hardcover: [1.0,  1.0,  1.0 ],
+  softcover: [1.0,  1.0,  0.7 ],
+  digest:    [0.92, 0.94, 0.5 ],
+  zine:      [0.92, 0.94, 0.15],
+  letter:    [1.42, 1.22, 1.0 ],
+};
+
+// Watermark anchor in book group local space (lower-right area of front face).
+// Calibrated initially to match ProceduralBook geometry.
+// Re-verify with Hero camera preset after GLTF models are loading:
+//   export at free tier, check watermark lands on front cover, adjust here.
+export const WATERMARK_COVER_LOCAL: [number, number, number] = [0.4, -0.6, 0.22];
 
 export const BOOK_ASPECT: Record<string, number> = {
   hardcover: 6 / 9,
