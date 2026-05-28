@@ -3,10 +3,15 @@
 import { useCallback, useState, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { ImageIcon, UploadCloud, X, AlertCircle } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
 import { useEditorStore } from "@/store/editorStore";
 import { cn } from "@/lib/utils";
 
-const LS_KEY = "ddcovers.r2key"; // localStorage key for cross-session persistence
+// ── localStorage key helpers ──────────────────────────────────────────────────
+// Keys are user-scoped so different users on the same device never share entries.
+// The legacy key "ddcovers.r2key" is cleaned up on first load.
+const LEGACY_LS_KEY = "ddcovers.r2key";
+const getCoverLsKey  = (userId: string) => `dragon-drop:${userId}:cover-r2key`;
 
 // ── R2 upload with XHR progress ───────────────────────────────────────────────
 
@@ -44,24 +49,45 @@ export function CoverDropzone() {
   // [Session 4] When projectId is set we route uploads through the project cover API
   const projectId     = useEditorStore((s) => s.projectId);
 
+  // Current authenticated user — used to scope localStorage keys
+  const { user } = useUser();
+  const userId  = user?.id ?? null;
+  // User-scoped key, or null while auth is still loading
+  const lsKey   = userId ? getCoverLsKey(userId) : null;
+
   const [isDragOver, setIsDragOver]   = useState(false);
   const [uploadPct, setUploadPct]     = useState<number | null>(null); // null = idle
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   // ── Restore cover from previous session (standalone editor only) ─────────────
   useEffect(() => {
+    // Always purge the legacy unscoped key — one-time migration cleanup.
+    localStorage.removeItem(LEGACY_LS_KEY);
+
     // In project context the builder page owns cover restoration — skip localStorage.
     if (projectId) return;
-    // Only restore if no cover is loaded yet
+    // Wait until Clerk has resolved the current user before reading localStorage.
+    if (!userId || !lsKey) return;
+    // Only restore if no cover is loaded yet.
     if (coverUrl) return;
-    const savedKey = localStorage.getItem(LS_KEY);
+
+    const savedKey = localStorage.getItem(lsKey);
     if (!savedKey) return;
+
+    // Ownership check: the R2 key path is structured as
+    // users/{clerkUserId}/...  — validate it belongs to the current user before
+    // making any API call.  Discards stale keys left by previous users on this
+    // device without needing a round-trip.
+    if (!savedKey.includes(`users/${userId}/`)) {
+      localStorage.removeItem(lsKey);
+      return;
+    }
 
     fetch(`/api/upload/signed-url?key=${encodeURIComponent(savedKey)}`)
       .then((r) => r.json())
       .then(async ({ readUrl }: { readUrl?: string }) => {
         if (!readUrl) {
-          localStorage.removeItem(LS_KEY);
+          localStorage.removeItem(lsKey);
           return;
         }
         // Pre-fetch as blob so Three.js gets a same-origin URL (avoids cross-origin
@@ -72,15 +98,15 @@ export function CoverDropzone() {
             const blob = await resp.blob();
             setCoverImage(URL.createObjectURL(blob), null, savedKey);
           } else {
-            localStorage.removeItem(LS_KEY);
+            localStorage.removeItem(lsKey);
           }
         } catch {
-          localStorage.removeItem(LS_KEY);
+          localStorage.removeItem(lsKey);
         }
       })
-      .catch(() => localStorage.removeItem(LS_KEY));
+      .catch(() => localStorage.removeItem(lsKey));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [userId]); // re-run if the authenticated user changes
 
   // ── Drop handler ──────────────────────────────────────────────────────────────
   const onDrop = useCallback(
@@ -125,7 +151,8 @@ export function CoverDropzone() {
         // (On next session load we restore from the signed R2 URL; no cross-origin
         //  texture reload needed mid-session.)
         setCoverR2Key(key);
-        localStorage.setItem(LS_KEY, key);
+        // Write to user-scoped key only; never write to the legacy unscoped key.
+        if (lsKey) localStorage.setItem(lsKey, key);
       } catch (err) {
         console.error("Cover upload failed:", err);
         setUploadError("Upload failed — cover loaded locally only.");
@@ -134,7 +161,7 @@ export function CoverDropzone() {
         setUploadPct(null);
       }
     },
-    [setCoverImage],
+    [setCoverImage, lsKey],
   );
 
   // ── Remove handler ────────────────────────────────────────────────────────────
@@ -143,7 +170,8 @@ export function CoverDropzone() {
       e.stopPropagation();
       const key = coverR2Key;
       setCoverImage(null, null, null);
-      localStorage.removeItem(LS_KEY);
+      if (lsKey) localStorage.removeItem(lsKey);
+      localStorage.removeItem(LEGACY_LS_KEY); // belt-and-suspenders for legacy key
 
       if (key) {
         if (projectId) {
@@ -163,7 +191,7 @@ export function CoverDropzone() {
         }
       }
     },
-    [coverR2Key, setCoverImage],
+    [coverR2Key, setCoverImage, lsKey],
   );
 
   const { getRootProps, getInputProps } = useDropzone({

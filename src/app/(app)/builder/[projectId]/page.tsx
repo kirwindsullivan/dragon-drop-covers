@@ -2,6 +2,7 @@
 
 import { useRef, useCallback, Suspense, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronLeft, Flame } from "lucide-react";
@@ -32,24 +33,49 @@ function SceneFallback() {
   );
 }
 
+// ── Outer page shell ──────────────────────────────────────────────────────────
+// Thin wrapper whose only job is to pass `key={userId}` to BuilderContent.
+// When the authenticated user changes (e.g. logout → login without a full
+// page reload) this forces a complete unmount + remount of the entire builder
+// tree, guaranteeing every component — including SafeZoneOverlay — starts clean.
 export default function BuilderPage() {
-  const params = useParams();
+  const { userId, isLoaded } = useAuth();
+  const params    = useParams();
   const projectId = params.projectId as string;
 
+  // Wait for Clerk to resolve the session before mounting the builder.
+  // This prevents a brief flash where userId is null (which would cause an
+  // immediate remount once Clerk resolves, resetting in-progress state).
+  if (!isLoaded) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-black">
+        <Flame className="h-10 w-10 text-brand-500 animate-pulse" />
+      </div>
+    );
+  }
+
+  return <BuilderContent key={userId ?? "unauthenticated"} projectId={projectId} />;
+}
+
+// ── Builder content ────────────────────────────────────────────────────────────
+// Contains all editor state and layout.  Receives a stable key from BuilderPage
+// so it remounts cleanly whenever the authenticated user changes.
+
+function BuilderContent({ projectId }: { projectId: string }) {
   const [project, setProject] = useState<ProjectMeta | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError]     = useState<string | null>(null);
 
   // Editor store setters — used to hydrate state from saved project
-  const setCoverImage      = useEditorStore((s) => s.setCoverImage);
-  const setBackground      = useEditorStore((s) => s.setBackground);
-  const setLighting        = useEditorStore((s) => s.setLighting);
-  const setPhoto           = useEditorStore((s) => s.setPhoto);
-  const setBookSize        = useEditorStore((s) => s.setBookSize);
-  const setTextOverlay     = useEditorStore((s) => s.setTextOverlay);
-  const setProjectId       = useEditorStore((s) => s.setProjectId);
-  const setProjectTier     = useEditorStore((s) => s.setProjectTier);
-  const resetEditorState   = useEditorStore((s) => s.resetEditorState);
+  const setCoverImage    = useEditorStore((s) => s.setCoverImage);
+  const setBackground    = useEditorStore((s) => s.setBackground);
+  const setLighting      = useEditorStore((s) => s.setLighting);
+  const setPhoto         = useEditorStore((s) => s.setPhoto);
+  const setBookSize      = useEditorStore((s) => s.setBookSize);
+  const setTextOverlay   = useEditorStore((s) => s.setTextOverlay);
+  const setProjectId     = useEditorStore((s) => s.setProjectId);
+  const setProjectTier   = useEditorStore((s) => s.setProjectTier);
+  const resetEditorState = useEditorStore((s) => s.resetEditorState);
 
   const background = useEditorStore((s) => s.background);
 
@@ -157,7 +183,7 @@ export default function BuilderPage() {
     [],
   );
 
-  // ── Loading / error states ─────────────────────────────────────────────────
+  // ── Loading / error states ───────────────────────────────────────────────────
 
   if (loading) {
     return (
