@@ -70,7 +70,8 @@ async function loadGltf(path: string): Promise<GLTF> {
 
 // ─── Disposal ─────────────────────────────────────────────────────────────────
 // Only dispose materials + textures tagged userData.ours=true.
-// Geometries are shared with the cache — never disposed here.
+// Geometries tagged userData.ours=true are also disposed (created by splitCoverGeometry).
+// Geometries shared with the GLTF cache are NEVER tagged ours and are never disposed here.
 //
 // IMPORTANT: never call disposeClone while the group is still in the R3F scene
 // graph (<primitive> is mounted).  Always defer via requestAnimationFrame so
@@ -82,6 +83,10 @@ function disposeClone(group: THREE.Group): void {
   group.traverse((node) => {
     const mesh = node as THREE.Mesh;
     if (!mesh.isMesh) return;
+    // Dispose owned geometries (e.g. from splitCoverGeometry)
+    if (mesh.geometry?.userData?.ours) {
+      mesh.geometry.dispose();
+    }
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
       if (!m || !m.userData.ours) continue;
@@ -94,6 +99,144 @@ function disposeClone(group: THREE.Group): void {
       m.dispose();
     }
   });
+}
+
+// ─── Sample average cover color ───────────────────────────────────────────────
+// Draws the cover image into a tiny 8×8 canvas and returns the average RGB color.
+// Used to set the spine/back material to a color that complements the cover art.
+
+function sampleAverageColor(img: HTMLImageElement): THREE.Color {
+  const SIZE = 8;
+  const canvas = document.createElement("canvas");
+  canvas.width  = SIZE;
+  canvas.height = SIZE;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return new THREE.Color("#888888");
+
+  ctx.drawImage(img, 0, 0, SIZE, SIZE);
+  const data = ctx.getImageData(0, 0, SIZE, SIZE).data;
+
+  let r = 0, g = 0, b = 0;
+  const pixelCount = SIZE * SIZE;
+  for (let i = 0; i < data.length; i += 4) {
+    r += data[i];
+    g += data[i + 1];
+    b += data[i + 2];
+  }
+
+  return new THREE.Color(
+    (r / pixelCount) / 255,
+    (g / pixelCount) / 255,
+    (b / pixelCount) / 255,
+  );
+}
+
+// ─── Split cover geometry by face normal ─────────────────────────────────────
+// Takes an indexed BufferGeometry and bins each triangle into one of two groups
+// based on the average Z component of its vertex normals:
+//
+//   frontGeo — triangles whose avg vertex normal Z >= threshold  (front face, +Z)
+//   restGeo  — all other triangles                               (spine, back, edges)
+//
+// Returns null if geometry is non-indexed, lacks required attributes (position /
+// normal / uv), or if either resulting group would be empty (miscalibrated threshold).
+//
+// Both output geometries are non-indexed and tagged userData.ours=true so
+// disposeClone can safely free them on model swap.
+
+function splitCoverGeometry(
+  geo: THREE.BufferGeometry,
+  threshold = 0.7,
+): { frontGeo: THREE.BufferGeometry; restGeo: THREE.BufferGeometry } | null {
+  const posAttr    = geo.attributes.position as THREE.BufferAttribute | undefined;
+  const normalAttr = geo.attributes.normal   as THREE.BufferAttribute | undefined;
+  const uvAttr     = geo.attributes.uv       as THREE.BufferAttribute | undefined;
+
+  if (!posAttr || !normalAttr || !uvAttr) {
+    console.warn(
+      "[useBookModel] splitCoverGeometry: missing position/normal/uv attributes — falling back",
+    );
+    return null;
+  }
+
+  const idx = geo.index;
+  if (!idx) {
+    console.warn(
+      "[useBookModel] splitCoverGeometry: non-indexed geometry not supported — falling back",
+    );
+    return null;
+  }
+
+  const frontPositions: number[] = [];
+  const frontNormals:   number[] = [];
+  const frontUVs:       number[] = [];
+  const restPositions:  number[] = [];
+  const restNormals:    number[] = [];
+  const restUVs:        number[] = [];
+
+  const triCount = Math.floor(idx.count / 3);
+  for (let t = 0; t < triCount; t++) {
+    const i0 = idx.getX(t * 3 + 0);
+    const i1 = idx.getX(t * 3 + 1);
+    const i2 = idx.getX(t * 3 + 2);
+
+    // Average normal Z across three vertices — front-face polygons point toward +Z
+    const avgNz = (normalAttr.getZ(i0) + normalAttr.getZ(i1) + normalAttr.getZ(i2)) / 3;
+
+    const isFront = avgNz >= threshold;
+    const tPos = isFront ? frontPositions : restPositions;
+    const tNrm = isFront ? frontNormals   : restNormals;
+    const tUV  = isFront ? frontUVs       : restUVs;
+
+    for (const vi of [i0, i1, i2]) {
+      tPos.push(posAttr.getX(vi),    posAttr.getY(vi),    posAttr.getZ(vi));
+      tNrm.push(normalAttr.getX(vi), normalAttr.getY(vi), normalAttr.getZ(vi));
+      tUV.push( uvAttr.getX(vi),     uvAttr.getY(vi));
+    }
+  }
+
+  if (frontPositions.length === 0 || restPositions.length === 0) {
+    console.warn(
+      `[useBookModel] splitCoverGeometry: split produced an empty group ` +
+      `(front=${frontPositions.length / 9} tris, rest=${restPositions.length / 9} tris, ` +
+      `threshold=${threshold}) — falling back`,
+    );
+    return null;
+  }
+
+  function makeGeo(pos: number[], nrm: number[], uv: number[]): THREE.BufferGeometry {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pos), 3));
+    g.setAttribute("normal",   new THREE.BufferAttribute(new Float32Array(nrm), 3));
+    g.setAttribute("uv",       new THREE.BufferAttribute(new Float32Array(uv),  2));
+    g.userData.ours = true;
+    return g;
+  }
+
+  const frontGeo = makeGeo(frontPositions, frontNormals, frontUVs);
+  const restGeo  = makeGeo(restPositions,  restNormals,  restUVs);
+
+  // UV diagnostic — log front-face UV bounds to verify correct face selection.
+  // If u/v ranges look wrong (e.g. very narrow or outside [0,1]) the threshold
+  // may need tuning or the model's normals may not align with world +Z.
+  {
+    const uvBuf = frontGeo.attributes.uv as THREE.BufferAttribute;
+    let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+    for (let i = 0; i < uvBuf.count; i++) {
+      const u = uvBuf.getX(i), v = uvBuf.getY(i);
+      if (u < uMin) uMin = u; if (u > uMax) uMax = u;
+      if (v < vMin) vMin = v; if (v > vMax) vMax = v;
+    }
+    console.log(
+      `[useBookModel] splitCoverGeometry: ` +
+      `front=${frontPositions.length / 9} tris (avgNz >= ${threshold}), ` +
+      `rest=${restPositions.length / 9} tris | ` +
+      `front UV u=[${uMin.toFixed(3)}, ${uMax.toFixed(3)}] ` +
+      `v=[${vMin.toFixed(3)}, ${vMax.toFixed(3)}]`,
+    );
+  }
+
+  return { frontGeo, restGeo };
 }
 
 // ─── UV region detection ──────────────────────────────────────────────────────
@@ -165,7 +308,7 @@ function getUVRegions(geo: THREE.BufferGeometry): {
 // spine/top-edge faces instead of the front face).
 // Retained for future reimplementation once the artist provides confirmed UV
 // island bounds or a UV atlas map per model.
-// Active code path: direct TextureLoader in buildCoverMaterial / Effect 2.
+// Active code path: splitCoverGeometry + direct TextureLoader in buildCoverMaterial / Effect 2.
 
 async function buildCompositeTexture(
   imgUrl: string,
@@ -332,13 +475,21 @@ function setupModelMaterials(group: THREE.Group, bookSize: BookSize): void {
 
 // ─── Apply cover texture to a fresh clone ────────────────────────────────────
 // Upgrades MeshStandardMaterial → MeshPhysicalMaterial (needed for applyFinish /
-// clearcoat), applies composite or simple cover texture, and returns the new material.
+// clearcoat), splits the cover mesh into a front-face mesh (cover texture) and a
+// rest mesh (spine/back with sampled average color), and returns the front material.
+//
+// The restMatRef.current is updated to the spine/back material so Effect 2 can
+// keep the sampled color in sync when the cover image changes.
+//
+// Falls back to single-material path if the geometry split fails (non-indexed,
+// missing normals, or degenerate threshold result).
 
 async function buildCoverMaterial(
   group: THREE.Group,
   bookSize: BookSize,
   coverUrl: string | null,
   spineTitle: string,
+  restMatRef: { current: THREE.MeshPhysicalMaterial | null },
 ): Promise<THREE.MeshPhysicalMaterial | null> {
   const entry = findCoverEntry(group, bookSize);
   if (!entry) return null;
@@ -352,11 +503,9 @@ async function buildCoverMaterial(
   } else {
     cloned = new THREE.MeshPhysicalMaterial({
       name:            entry.mat.name,
-      // color and map are set to neutral below — do not copy GLB baked values
+      // color and map set to neutral below — do not copy GLB baked values
       roughness:       entry.mat.roughness,
       metalness:       entry.mat.metalness,
-      normalMap:       entry.mat.normalMap,
-      normalScale:     entry.mat.normalScale?.clone(),
       envMapIntensity: entry.mat.envMapIntensity,
     });
     console.log(
@@ -365,59 +514,103 @@ async function buildCoverMaterial(
   }
 
   // ── Neutral placeholder ──────────────────────────────────────────────────────
-  // The GLB has the artist's test/cover art baked into its base color texture.
-  // Always clear it so the model shows a clean mid-gray when no cover is uploaded.
-  // color is reset to white (#ffffff) once a user texture is applied so it
-  // renders at full brightness (color acts as a tint multiplier on the texture).
-  cloned.map = null;
-  cloned.color.set("#888888");
-  // Temporary: clear the incorrectly baked normal map from the cover material only.
-  // Page block mesh normal maps are unaffected (separate materials, not touched here).
-  // Remove once the artist delivers correctly baked normal maps.
+  // Clear baked GLB art; null both normal maps (baked incorrectly, artist fix pending).
+  // color resets to #ffffff once a user texture is applied (acts as tint multiplier).
+  cloned.map       = null;
   cloned.normalMap = null;
-  cloned.needsUpdate = true;
+  cloned.bumpMap   = null;
+  cloned.color.set("#888888");
+  cloned.needsUpdate   = true;
   cloned.userData.ours = true;
+  console.log("[useBookModel] normalMap after null:", cloned.normalMap);
 
-  // Replace on mesh (entry.mesh is in our clone — safe to mutate)
-  if (Array.isArray(entry.mesh.material)) {
-    const idx = (entry.mesh.material as THREE.Material[]).indexOf(entry.mat);
-    if (idx >= 0) {
-      const arr = [...(entry.mesh.material as THREE.Material[])];
-      arr[idx] = cloned;
-      entry.mesh.material = arr;
-    }
+  // ── Split cover mesh into front face + rest (spine/back/edges) ───────────────
+  const split = splitCoverGeometry(entry.mesh.geometry);
+  let restMat: THREE.MeshPhysicalMaterial | null = null;
+
+  if (split) {
+    // Spine/back material — flat color sampled from cover art (no texture)
+    restMat = new THREE.MeshPhysicalMaterial({
+      name:            entry.mat.name + "_rest",
+      roughness:       entry.mat.roughness,
+      metalness:       entry.mat.metalness,
+      color:           new THREE.Color("#888888"),
+      envMapIntensity: entry.mat.envMapIntensity,
+    });
+    restMat.userData.ours = true;
+
+    // Front mesh: sibling of entry.mesh, inherits its local transform so it
+    // renders in the same world space; carries cover texture via cloned material.
+    const frontMesh = new THREE.Mesh(split.frontGeo, cloned);
+    frontMesh.name = entry.mesh.name + "_front";
+    frontMesh.position.copy(entry.mesh.position);
+    frontMesh.rotation.copy(entry.mesh.rotation);
+    frontMesh.scale.copy(entry.mesh.scale);
+    const parent = entry.mesh.parent ?? group;
+    parent.add(frontMesh);
+
+    // Replace original mesh with rest geometry (spine/back/edges) + rest material
+    entry.mesh.geometry = split.restGeo;
+    entry.mesh.material = restMat;
+
+    restMatRef.current = restMat;
+    console.log("[useBookModel] Cover mesh split: front face separated from spine/back");
   } else {
-    entry.mesh.material = cloned;
+    // Fallback: apply cloned material to full original mesh
+    if (Array.isArray(entry.mesh.material)) {
+      const idx2 = (entry.mesh.material as THREE.Material[]).indexOf(entry.mat);
+      if (idx2 >= 0) {
+        const arr = [...(entry.mesh.material as THREE.Material[])];
+        arr[idx2] = cloned;
+        entry.mesh.material = arr;
+      }
+    } else {
+      entry.mesh.material = cloned;
+    }
+    restMatRef.current = null;
+    console.warn("[useBookModel] Cover mesh split failed — single-material fallback active");
   }
 
-  // No cover — return the neutral gray placeholder
+  // No cover URL — return the neutral gray placeholder
   if (!coverUrl) return cloned;
 
-  // TODO: Implement composite UV texture for spine/back color sampling
-  // once UV island bounds are confirmed for each model.
-  // Currently applying cover texture directly to material.
-  const tex = await new Promise<THREE.Texture | null>((resolve) => {
-    new THREE.TextureLoader().load(
-      coverUrl,
-      (t) => {
-        // flipY=false: GLTF UV convention has V=0 at top-of-image
-        t.flipY         = false;
-        t.wrapS         = THREE.ClampToEdgeWrapping;
-        t.wrapT         = THREE.ClampToEdgeWrapping;
-        t.colorSpace    = THREE.SRGBColorSpace;
-        t.userData.ours = true;
-        resolve(t);
-      },
-      undefined,
-      () => resolve(null),
-    );
-  });
+  // Load via new Image() so we can both create the GPU texture and sample the
+  // average color for spine/back in a single network round-trip.
+  const imgResult = await new Promise<{ tex: THREE.Texture; img: HTMLImageElement } | null>(
+    (resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        const tex = new THREE.Texture(img);
+        // flipY=false: GLTF UV V=0 is at image top, matching canvas Y=0
+        tex.flipY         = false;
+        tex.wrapS         = THREE.ClampToEdgeWrapping;
+        tex.wrapT         = THREE.ClampToEdgeWrapping;
+        tex.colorSpace    = THREE.SRGBColorSpace;
+        tex.userData.ours = true;
+        tex.needsUpdate   = true;
+        resolve({ tex, img });
+      };
+      img.onerror = () => resolve(null);
+      img.src = coverUrl;
+    },
+  );
 
-  if (tex) {
-    // Reset color to white so the texture renders at full brightness (no gray tint)
+  if (imgResult) {
+    const { tex, img } = imgResult;
+    // Reset color to white so texture renders at full brightness (no gray tint)
     cloned.color.set("#ffffff");
-    cloned.map = tex;
+    cloned.map       = tex;
+    cloned.normalMap = null;
+    cloned.bumpMap   = null;
     cloned.needsUpdate = true;
+    console.log("[useBookModel] normalMap after null:", cloned.normalMap);
+
+    // Set spine/back to sampled average color from cover art
+    if (restMat) {
+      restMat.color.copy(sampleAverageColor(img));
+      restMat.needsUpdate = true;
+    }
   }
 
   return cloned;
@@ -445,9 +638,11 @@ export function useBookModel(
   useEffect(() => { finishRef.current     = finish;     }, [finish]);
   useEffect(() => { bookSizeRef.current   = bookSize;   }, [bookSize]);
 
-  // Live refs to the active group and cover material for reactive updates
+  // Live refs to the active group and cover materials for reactive updates
   const groupRef    = useRef<THREE.Group | null>(null);
   const coverMatRef = useRef<THREE.MeshPhysicalMaterial | null>(null);
+  // restMatRef — spine/back material created by splitCoverGeometry; null if split failed
+  const restMatRef  = useRef<THREE.MeshPhysicalMaterial | null>(null);
 
   // ── Effect 1: Load / reload GLB on bookSize change ─────────────────────────
   useEffect(() => {
@@ -471,12 +666,13 @@ export function useBookModel(
         // Per-model material setup (clear AO, assign Page material where needed, etc.)
         setupModelMaterials(group, bookSize);
 
-        // Build (or re-apply) cover material with neutral placeholder
+        // Build cover material: upgrade Standard→Physical, split mesh, apply texture
         const coverMat = await buildCoverMaterial(
           group,
           bookSize,
           coverUrlRef.current,
           spineTitleRef.current,
+          restMatRef,
         );
 
         if (cancelled) {
@@ -521,45 +717,65 @@ export function useBookModel(
 
     if (!coverUrl) {
       if (mat.map?.userData.ours) mat.map.dispose();
-      mat.map = null;
+      mat.map      = null;
+      mat.normalMap = null;
+      mat.bumpMap   = null;
       mat.color.set("#888888"); // restore neutral gray placeholder
       mat.needsUpdate = true;
+      console.log("[useBookModel] normalMap after null:", mat.normalMap);
+      // Reset spine/back to gray placeholder as well
+      const restMat = restMatRef.current;
+      if (restMat) {
+        restMat.color.set("#888888");
+        restMat.needsUpdate = true;
+      }
       return;
     }
 
     let cancelled = false;
     const run = async () => {
-      // TODO: Implement composite UV texture for spine/back color sampling
-      // once UV island bounds are confirmed for each model.
-      // Currently applying cover texture directly to material.
-      const newTex = await new Promise<THREE.Texture | null>((resolve) => {
-        new THREE.TextureLoader().load(
-          coverUrl,
-          (t) => {
-            // flipY=false: GLTF UV convention has V=0 at top-of-image
-            t.flipY         = false;
-            t.wrapS         = THREE.ClampToEdgeWrapping;
-            t.wrapT         = THREE.ClampToEdgeWrapping;
-            t.colorSpace    = THREE.SRGBColorSpace;
-            t.userData.ours = true;
-            resolve(t);
-          },
-          undefined,
-          () => resolve(null),
-        );
-      });
+      // Use new Image() so we can sample average color for spine/back in the same load
+      const imgResult = await new Promise<{ tex: THREE.Texture; img: HTMLImageElement } | null>(
+        (resolve) => {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            const tex = new THREE.Texture(img);
+            // flipY=false: GLTF UV V=0 is at image top, matching canvas Y=0
+            tex.flipY         = false;
+            tex.wrapS         = THREE.ClampToEdgeWrapping;
+            tex.wrapT         = THREE.ClampToEdgeWrapping;
+            tex.colorSpace    = THREE.SRGBColorSpace;
+            tex.userData.ours = true;
+            tex.needsUpdate   = true;
+            resolve({ tex, img });
+          };
+          img.onerror = () => resolve(null);
+          img.src = coverUrl;
+        },
+      );
 
-      if (cancelled || !newTex) return;
+      if (cancelled || !imgResult) return;
 
       const currentMat = coverMatRef.current;
       if (!currentMat) return; // model may have swapped mid-flight
 
-      // Dispose previous texture if it was ours
+      // Dispose previous texture if we own it
       if (currentMat.map?.userData.ours) currentMat.map.dispose();
-      // Reset color to white so the texture renders at full brightness (no gray tint)
+      // Reset color to white so texture renders at full brightness (no gray tint)
       currentMat.color.set("#ffffff");
-      currentMat.map = newTex;
+      currentMat.map       = imgResult.tex;
+      currentMat.normalMap = null;
+      currentMat.bumpMap   = null;
       currentMat.needsUpdate = true;
+      console.log("[useBookModel] normalMap after null:", currentMat.normalMap);
+
+      // Update spine/back material with average color sampled from new cover art
+      const restMat = restMatRef.current;
+      if (restMat) {
+        restMat.color.copy(sampleAverageColor(imgResult.img));
+        restMat.needsUpdate = true;
+      }
     };
 
     void run();
