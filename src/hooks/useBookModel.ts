@@ -138,22 +138,26 @@ function sampleAverageColor(img: HTMLImageElement): THREE.Color {
   );
 }
 
-// ─── Split cover geometry by UV area + Z position ────────────────────────────
-// Two-pass approach to isolate the front cover face from back/spine/edges:
+// ─── Split cover geometry by UV area + UV u-coordinate ───────────────────────
+// Two-filter approach to isolate the front cover face from back/spine/edges.
+// Uses the confirmed Blender UV island layout (five non-overlapping islands):
 //
-//   Pass 1 — UV area filter: compute the UV-space area of every triangle and keep
-//             only "large-UV" candidates (area >= maxArea * areaFraction).  The
-//             front AND back faces both qualify; spine/edge triangles do not.
+//   Filter 1 — UV area: large-UV-area triangles are flat cover faces; thin edge
+//               and spine triangles are excluded (area >= maxArea * areaFraction).
 //
-//   Pass 2 — Z position filter: among large-UV candidates, keep only triangles
-//             whose average vertex Z is positive (front face sits at +Z in local
-//             model space; back face sits at -Z).  Everything else goes to restGeo.
+//   Filter 2 — UV u-coordinate: the front cover island sits in u < FRONT_U_MAX
+//               (≈ 0.35 per Blender UV editor).  Back cover is in the adjacent
+//               island to the right.  This is stable across model orientations
+//               and Z offsets, unlike a position-based threshold.
 //
 // Returns null if the geometry is non-indexed, lacks required attributes, or
-// either output group would be empty after both filters.
+// either output group would be empty.
 //
 // Both output geometries are non-indexed and tagged userData.ours=true so
 // disposeClone can safely free them on model swap.
+
+/** UV u-coordinate upper bound for the front cover island (Blender-confirmed). */
+const FRONT_U_MAX = 0.35;
 
 function splitCoverGeometry(
   geo: THREE.BufferGeometry,
@@ -219,34 +223,10 @@ function splitCoverGeometry(
   const topAreas = Array.from(uvAreas).filter(a => a > 0).sort((a, b) => b - a).slice(0, 10);
   console.log("[useBookModel] top UV triangle areas:", topAreas.map(a => a.toFixed(6)));
 
-  // ── Pass 2a: collect large-UV candidate Z values to find the midpoint ──────────
-  // The model may not be Z-centred (both front and back faces can sit at positive Z).
-  // Using a fixed threshold of 0 is unreliable; using the midpoint of the candidate
-  // Z range is model-agnostic — front face is always at higher Z than back face.
-  let candidateMinZ =  Infinity;
-  let candidateMaxZ = -Infinity;
-  const candidateZSample: number[] = []; // first 10 for the diagnostic log
-
-  for (let t = 0; t < triCount; t++) {
-    if (uvAreas[t] < areaThreshold) continue; // only large-UV triangles qualify
-    const i0 = idx.getX(t * 3), i1 = idx.getX(t * 3 + 1), i2 = idx.getX(t * 3 + 2);
-    const avgZ = (posAttr.getZ(i0) + posAttr.getZ(i1) + posAttr.getZ(i2)) / 3;
-    if (avgZ < candidateMinZ) candidateMinZ = avgZ;
-    if (avgZ > candidateMaxZ) candidateMaxZ = avgZ;
-    if (candidateZSample.length < 10) candidateZSample.push(avgZ);
-  }
-
-  const midZ = (candidateMinZ + candidateMaxZ) / 2;
-  console.log(
-    `[useBookModel] large-UV Z range: min=${candidateMinZ.toFixed(4)}, ` +
-    `max=${candidateMaxZ.toFixed(4)}, midZ=${midZ.toFixed(4)}`,
-  );
-  console.log(
-    "[useBookModel] large-UV candidate Z sample (first 10):",
-    candidateZSample.map(z => z.toFixed(4)),
-  );
-
-  // ── Pass 2b: bin triangles using the computed midpoint as front/back boundary ──
+  // ── Pass 2: bin triangles by UV area + UV u-coordinate ───────────────────────
+  // Front cover UV island sits at u < FRONT_U_MAX (≈ 0.35, Blender-confirmed).
+  // Back cover island is the adjacent region; both have similar UV areas, so
+  // the area filter alone cannot distinguish them — the u-coordinate does.
   const frontPositions: number[] = [];
   const frontNormals:   number[] = [];
   const frontUVs:       number[] = [];
@@ -254,17 +234,23 @@ function splitCoverGeometry(
   const restNormals:    number[] = [];
   const restUVs:        number[] = [];
   let backExcluded = 0;
+  const candidateUSample: number[] = []; // first 10 large-UV avg-U values for diagnostics
 
   for (let t = 0; t < triCount; t++) {
     const i0 = idx.getX(t * 3), i1 = idx.getX(t * 3 + 1), i2 = idx.getX(t * 3 + 2);
 
     const isLargeUV = uvAreas[t] >= areaThreshold;
-    const avgZ = (posAttr.getZ(i0) + posAttr.getZ(i1) + posAttr.getZ(i2)) / 3;
 
-    // Front = large UV area AND above the midpoint of the front/back Z range
-    const isFront = isLargeUV && avgZ > midZ;
+    // Average U of triangle's three UV coordinates
+    const avgU = (uvAttr.getX(i0) + uvAttr.getX(i1) + uvAttr.getX(i2)) / 3;
 
-    if (isLargeUV && !isFront) backExcluded++;
+    if (isLargeUV) {
+      if (candidateUSample.length < 10) candidateUSample.push(avgU);
+      if (avgU >= FRONT_U_MAX) backExcluded++;
+    }
+
+    // Front face: large UV island AND u < FRONT_U_MAX
+    const isFront = isLargeUV && avgU < FRONT_U_MAX;
 
     const tPos = isFront ? frontPositions : restPositions;
     const tNrm = isFront ? frontNormals   : restNormals;
@@ -278,8 +264,13 @@ function splitCoverGeometry(
   }
 
   console.log(
-    `[useBookModel] After Z midpoint filter: front=${frontPositions.length / 9} tris, ` +
-    `back candidates excluded=${backExcluded}`,
+    "[useBookModel] large-UV candidate avgU sample (first 10):",
+    candidateUSample.map(u => u.toFixed(4)),
+  );
+  console.log(
+    `[useBookModel] After U filter (< ${FRONT_U_MAX}): ` +
+    `front=${frontPositions.length / 9} tris, ` +
+    `non-front large-UV excluded=${backExcluded}`,
   );
 
   if (frontPositions.length === 0 || restPositions.length === 0) {
@@ -658,7 +649,7 @@ async function buildCoverMaterial(
 
     restMatRef.current = restMat;
 
-    // Diagnostic: confirm original is gone and both split meshes are present
+    // Diagnostic: log scene meshes + confirm the two materials are distinct instances
     console.log("[useBookModel] meshes in group after split:");
     group.traverse((obj) => {
       const m = obj as THREE.Mesh;
@@ -666,9 +657,16 @@ async function buildCoverMaterial(
       const mat = Array.isArray(m.material) ? m.material[0] : m.material;
       console.log(` - ${m.name} | material: ${(mat as THREE.Material)?.name ?? "(none)"}`);
     });
-    console.log(
-      `[useBookModel] coverMat: "${cloned.name}" | restMat: "${restMat.name}"`,
-    );
+    {
+      const fObj = group.getObjectByName(frontMesh.name) as THREE.Mesh | undefined;
+      const rObj = group.getObjectByName(restMesh.name)  as THREE.Mesh | undefined;
+      const fMat = fObj ? (Array.isArray(fObj.material) ? fObj.material[0] : fObj.material) as THREE.Material : null;
+      const rMat = rObj ? (Array.isArray(rObj.material) ? rObj.material[0] : rObj.material) as THREE.Material : null;
+      console.log("[useBookModel] restMat.map:",   restMat.map, "| restMat.color:", restMat.color.getHexString());
+      console.log("[useBookModel] coverMat uuid:", cloned.uuid,  "| restMat uuid:", restMat.uuid);
+      console.log("[useBookModel] front mat uuid:", fMat?.uuid,  "| rest mat uuid:", rMat?.uuid);
+      console.log("[useBookModel] same material instance?:", fMat === rMat);
+    }
     console.log("[useBookModel] Cover mesh split: original removed, front + rest added");
   } else {
     // Fallback: apply cloned material to full original mesh
