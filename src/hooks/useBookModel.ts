@@ -157,7 +157,7 @@ function sampleAverageColor(img: HTMLImageElement): THREE.Color {
 // disposeClone can safely free them on model swap.
 
 /** UV u-coordinate upper bound for the front cover island (Blender-confirmed). */
-const FRONT_U_MAX = 0.30; // was 0.35 — tightened to exclude back face boundary triangles
+const FRONT_U_MAX = 0.29; // was 0.30 — tightened to exclude back face boundary triangles
 
 function splitCoverGeometry(
   geo: THREE.BufferGeometry,
