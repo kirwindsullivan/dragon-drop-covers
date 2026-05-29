@@ -616,7 +616,7 @@ async function buildCoverMaterial(
   let restMat: THREE.MeshPhysicalMaterial | null = null;
 
   if (split) {
-    // Spine/back material — flat color sampled from cover art (no texture)
+    // Spine/back/edge material — sampled color, no texture
     restMat = new THREE.MeshPhysicalMaterial({
       name:            entry.mat.name + "_rest",
       roughness:       entry.mat.roughness,
@@ -626,28 +626,50 @@ async function buildCoverMaterial(
     });
     restMat.userData.ours = true;
 
-    // Front mesh: sibling of entry.mesh, inherits its local transform so it
-    // renders in the same world space; carries cover texture via cloned material.
+    // Capture the original mesh's local transform before removing it.
+    // Both replacement meshes live in the same parent space, so they copy
+    // position/rotation/scale directly.
+    const origPos = entry.mesh.position.clone();
+    const origRot = entry.mesh.rotation.clone();
+    const origScale = entry.mesh.scale.clone();
+    const parent = entry.mesh.parent ?? group;
+
+    // Front mesh: cover texture on front-face polygons only
     const frontMesh = new THREE.Mesh(split.frontGeo, cloned);
     frontMesh.name = entry.mesh.name + "_front";
-    frontMesh.position.copy(entry.mesh.position);
-    frontMesh.rotation.copy(entry.mesh.rotation);
-    frontMesh.scale.copy(entry.mesh.scale);
-    const parent = entry.mesh.parent ?? group;
+    frontMesh.position.copy(origPos);
+    frontMesh.rotation.copy(origRot);
+    frontMesh.scale.copy(origScale);
+    frontMesh.userData.splitGeo = split.frontGeo; // explicit ref for disposeClone
+
+    // Rest mesh: spine / back / edges with sampled average color
+    const restMesh = new THREE.Mesh(split.restGeo, restMat);
+    restMesh.name = entry.mesh.name + "_rest";
+    restMesh.position.copy(origPos);
+    restMesh.rotation.copy(origRot);
+    restMesh.scale.copy(origScale);
+    restMesh.userData.splitGeo = split.restGeo; // explicit ref for disposeClone
+
+    // Remove the original mesh entirely — it is replaced by the two split meshes.
+    // Do NOT dispose its geometry or material; they are shared with the GLTF cache.
+    parent.remove(entry.mesh);
     parent.add(frontMesh);
-
-    // Replace original mesh with rest geometry (spine/back/edges) + rest material
-    entry.mesh.geometry = split.restGeo;
-    entry.mesh.material = restMat;
-
-    // Explicit splitGeo references on each mesh — belt-and-suspenders alongside
-    // userData.ours on the geometry.  disposeClone checks both paths so neither
-    // a missed tag nor a THREE.js version quirk can leak a BufferGeometry.
-    frontMesh.userData.splitGeo  = split.frontGeo;
-    entry.mesh.userData.splitGeo = split.restGeo;
+    parent.add(restMesh);
 
     restMatRef.current = restMat;
-    console.log("[useBookModel] Cover mesh split: front face separated from spine/back");
+
+    // Diagnostic: confirm original is gone and both split meshes are present
+    console.log("[useBookModel] meshes in group after split:");
+    group.traverse((obj) => {
+      const m = obj as THREE.Mesh;
+      if (!m.isMesh) return;
+      const mat = Array.isArray(m.material) ? m.material[0] : m.material;
+      console.log(` - ${m.name} | material: ${(mat as THREE.Material)?.name ?? "(none)"}`);
+    });
+    console.log(
+      `[useBookModel] coverMat: "${cloned.name}" | restMat: "${restMat.name}"`,
+    );
+    console.log("[useBookModel] Cover mesh split: original removed, front + rest added");
   } else {
     // Fallback: apply cloned material to full original mesh
     if (Array.isArray(entry.mesh.material)) {
