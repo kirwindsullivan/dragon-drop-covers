@@ -138,20 +138,19 @@ function sampleAverageColor(img: HTMLImageElement): THREE.Color {
   );
 }
 
-// ─── Split cover geometry by UV triangle area ────────────────────────────────
-// Identifies the front cover face by UV area rather than by normal direction.
-// The front face always occupies the largest UV island regardless of which local
-// axis its normals point along (important for GLTF exports from Blender where the
-// front face may be oriented along -Y or some other axis in local space).
+// ─── Split cover geometry by UV area + Z position ────────────────────────────
+// Two-pass approach to isolate the front cover face from back/spine/edges:
 //
-// Algorithm:
-//   Pass 1 — compute the UV area (cross-product magnitude) of every triangle and
-//             find the maximum.
-//   Pass 2 — triangles whose UV area >= maxArea * areaFraction go into frontGeo;
-//             everything else (spine, back, top/bottom edges) goes into restGeo.
+//   Pass 1 — UV area filter: compute the UV-space area of every triangle and keep
+//             only "large-UV" candidates (area >= maxArea * areaFraction).  The
+//             front AND back faces both qualify; spine/edge triangles do not.
+//
+//   Pass 2 — Z position filter: among large-UV candidates, keep only triangles
+//             whose average vertex Z is positive (front face sits at +Z in local
+//             model space; back face sits at -Z).  Everything else goes to restGeo.
 //
 // Returns null if the geometry is non-indexed, lacks required attributes, or
-// either output group would be empty.
+// either output group would be empty after both filters.
 //
 // Both output geometries are non-indexed and tagged userData.ours=true so
 // disposeClone can safely free them on model swap.
@@ -220,7 +219,11 @@ function splitCoverGeometry(
   const topAreas = Array.from(uvAreas).filter(a => a > 0).sort((a, b) => b - a).slice(0, 10);
   console.log("[useBookModel] top UV triangle areas:", topAreas.map(a => a.toFixed(6)));
 
-  // ── Pass 2: bin triangles by UV area ─────────────────────────────────────────
+  // ── Pass 2: bin triangles by UV area AND Z position ──────────────────────────
+  // Collect Z values of large-UV candidates before filtering to aid diagnostics.
+  const candidateZValues: number[] = [];
+  let backExcluded = 0;
+
   const frontPositions: number[] = [];
   const frontNormals:   number[] = [];
   const frontUVs:       number[] = [];
@@ -231,7 +234,20 @@ function splitCoverGeometry(
   for (let t = 0; t < triCount; t++) {
     const i0 = idx.getX(t * 3), i1 = idx.getX(t * 3 + 1), i2 = idx.getX(t * 3 + 2);
 
-    const isFront = uvAreas[t] >= areaThreshold;
+    // Primary filter: large UV island (front/back faces qualify; thin edges do not)
+    const isLargeUV = uvAreas[t] >= areaThreshold;
+
+    // Secondary filter: front face has positive avg Z; back face has negative avg Z
+    const avgZ = (posAttr.getZ(i0) + posAttr.getZ(i1) + posAttr.getZ(i2)) / 3;
+
+    if (isLargeUV) {
+      candidateZValues.push(avgZ);
+      if (avgZ <= 0) backExcluded++;
+    }
+
+    // Triangle is front face only if it passes BOTH filters
+    const isFront = isLargeUV && avgZ > 0;
+
     const tPos = isFront ? frontPositions : restPositions;
     const tNrm = isFront ? frontNormals   : restNormals;
     const tUV  = isFront ? frontUVs       : restUVs;
@@ -242,6 +258,16 @@ function splitCoverGeometry(
       tUV.push( uvAttr.getX(vi),     uvAttr.getY(vi));
     }
   }
+
+  // Diagnostic: Z values of large-UV candidates (first 10) + how many back faces excluded
+  console.log(
+    "[useBookModel] large-UV candidate Z values (first 10):",
+    candidateZValues.slice(0, 10).map(z => z.toFixed(4)),
+  );
+  console.log(
+    `[useBookModel] After Z filter: front=${frontPositions.length / 9} tris, ` +
+    `back candidates excluded=${backExcluded}`,
+  );
 
   if (frontPositions.length === 0 || restPositions.length === 0) {
     console.warn(
@@ -279,7 +305,7 @@ function splitCoverGeometry(
   }
   console.log(
     `[useBookModel] splitCoverGeometry: ` +
-    `front=${frontPositions.length / 9} tris (UV area >= ${areaFraction * 100}% of max), ` +
+    `front=${frontPositions.length / 9} tris (large UV + avgZ > 0), ` +
     `rest=${restPositions.length / 9} tris | ` +
     `front UV ${uvBounds(frontGeo)} | rest UV ${uvBounds(restGeo)}`,
   );
