@@ -730,6 +730,16 @@ export function BookScene({ onReady }: { onReady?: (handle: BookSceneHandle) => 
           // [v2.1 Part 4] Default exposure; will be overridden by hdriIntensity effect
           gl.toneMappingExposure = hdriIntensity;
           gl.outputColorSpace    = THREE.SRGBColorSpace;
+          // Context loss diagnostics — e.preventDefault() allows the context to
+          // restore automatically; without it the browser marks the context as
+          // permanently lost.
+          gl.domElement.addEventListener("webglcontextlost", (e) => {
+            console.error("[WebGL] Context lost:", e);
+            e.preventDefault();
+          });
+          gl.domElement.addEventListener("webglcontextrestored", () => {
+            console.log("[WebGL] Context restored");
+          });
         }}
       >
         <PerspectiveCamera makeDefault position={[0.8, 1.4, 6.5]} fov={32} near={0.01} far={100} />

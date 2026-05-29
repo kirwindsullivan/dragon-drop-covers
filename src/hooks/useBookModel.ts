@@ -84,14 +84,19 @@ function disposeClone(group: THREE.Group): void {
   group.traverse((node) => {
     const mesh = node as THREE.Mesh;
     if (!mesh.isMesh) return;
-    // Dispose owned geometries (tagged userData.ours=true by splitCoverGeometry)
-    if (mesh.geometry?.userData?.ours) {
+    // Dispose owned geometries (tagged userData.ours=true by splitCoverGeometry).
+    // Guard: for split meshes mesh.geometry and userData.splitGeo reference the
+    // SAME BufferGeometry object, so both paths firing without a guard disposes
+    // the WebGL buffer twice — causing context loss.
+    if (mesh.geometry?.userData?.ours && !mesh.geometry.userData.disposed) {
+      mesh.geometry.userData.disposed = true;
       mesh.geometry.dispose();
     }
-    // Belt-and-suspenders: also dispose explicit splitGeo references stored by
-    // buildCoverMaterial (catches any geometry that lost its userData.ours tag)
+    // Belt-and-suspenders: explicit splitGeo ref set by buildCoverMaterial.
+    // Guarded separately in case the geometry ref differs from mesh.geometry.
     const splitGeo = mesh.userData.splitGeo as THREE.BufferGeometry | undefined;
-    if (splitGeo) {
+    if (splitGeo && !splitGeo.userData.disposed) {
+      splitGeo.userData.disposed = true;
       splitGeo.dispose();
       delete mesh.userData.splitGeo;
     }
