@@ -183,7 +183,7 @@ function applyCoverUVTransform(tex: THREE.Texture, bounds: FrontUVBounds): void 
 // not an error.  All output geometries are tagged userData.ours=true.
 
 /** UV u-coordinate upper bound for the front cover island (Blender-confirmed). */
-const FRONT_U_MAX = 0.29; // was 0.30 — tightened to exclude back face boundary triangles
+const FRONT_U_MAX = 0.30; // front face avgU confirmed ≤ 0.28; back face at 0.34–0.36 safely excluded
 
 function splitCoverGeometry(
   geo: THREE.BufferGeometry,
