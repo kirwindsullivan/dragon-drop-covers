@@ -25,7 +25,8 @@ import * as THREE from "three";
 // all Three.js example loaders with proper TypeScript declarations.
 import { GLTFLoader } from "three-stdlib";
 import type { GLTF } from "three-stdlib";
-import { MODEL_MAP, SCALE_MAP } from "@/lib/constants";
+import { MODEL_MAP, SCALE_MAP, FRONT_UV_MAP } from "@/lib/constants";
+import type { FrontUVBounds } from "@/lib/constants";
 import { applyFinish } from "@/utils/applyFinish";
 import { generateSpineTexture, generateBackTexture } from "@/lib/three/spineGenerator";
 import type { BookSize, FinishType } from "@/types";
@@ -136,6 +137,28 @@ function sampleAverageColor(img: HTMLImageElement): THREE.Color {
     (g / pixelCount) / 255,
     (b / pixelCount) / 255,
   );
+}
+
+// ─── Cover texture UV transform ───────────────────────────────────────────────
+// The front cover UV island occupies only a sub-region of [0,1]² in the atlas.
+// A raw texture application maps the full [0,1] texture space to [0,1] UVs, so
+// only the small island portion of the texture is visible — appearing zoomed in.
+//
+// Fix: scale and shift the texture so the island bounds map to the full image:
+//   repeat  = 1 / range      → stretches the image to fill the island
+//   offset  = -min / range   → shifts the origin so island-min samples image x=0
+//
+// Verification: at UV u=uMin → transformed = 0 (left edge of image)
+//               at UV u=uMax → transformed = 1 (right edge of image)  ✓
+
+function applyCoverUVTransform(tex: THREE.Texture, bounds: FrontUVBounds): void {
+  const uRange = bounds.uMax - bounds.uMin;
+  const vRange = bounds.vMax - bounds.vMin;
+  tex.repeat.set(1 / uRange, 1 / vRange);
+  tex.offset.set(-bounds.uMin / uRange, -bounds.vMin / vRange);
+  // wrapS/wrapT stay ClampToEdgeWrapping — transformed UVs for frontGeo land
+  // in [0,1] so the clamp never fires; repeat > 1 is just the matrix scalar.
+  tex.needsUpdate = true;
 }
 
 // ─── Split cover geometry by UV area + UV u-coordinate ───────────────────────
@@ -716,6 +739,8 @@ async function buildCoverMaterial(
     cloned.map       = tex;
     cloned.normalMap = null;
     cloned.bumpMap   = null;
+    // Scale the texture to fill the front face UV island exactly
+    applyCoverUVTransform(tex, FRONT_UV_MAP[bookSize]);
     cloned.needsUpdate = true;
     console.log("[useBookModel] normalMap after null:", cloned.normalMap);
 
@@ -880,6 +905,8 @@ export function useBookModel(
       currentMat.map       = imgResult.tex;
       currentMat.normalMap = null;
       currentMat.bumpMap   = null;
+      // Scale the texture to fill the front face UV island exactly
+      applyCoverUVTransform(imgResult.tex, FRONT_UV_MAP[bookSizeRef.current]);
       currentMat.needsUpdate = true;
       console.log("[useBookModel] normalMap after null:", currentMat.normalMap);
 

@@ -135,3 +135,44 @@ export const BOOK_ASPECT: Record<string, number> = {
   zine: 5.5 / 8.5,
   letter: 8.5 / 11,
 };
+
+// ─── Front cover UV island bounds ────────────────────────────────────────────
+// Each GLB has a UV atlas where the front cover occupies a sub-region of [0,1]².
+// These bounds are read from the Blender UV editor and confirmed by the
+// splitCoverGeometry console output.  Used to scale/offset the cover texture so
+// the full image fills the front face rather than rendering zoomed-in.
+//
+// To apply: repeat = 1/range, offset = -min/range
+//   → UV u=uMin samples texture x=0 (left), u=uMax samples x=1 (right)
+//
+// Softcover/Zine values are copies of Hardcover for now — tune after testing
+// those models (splitCoverGeometry logs "front UV u=[...] v=[...]" at load).
+
+export interface FrontUVBounds {
+  uMin: number; uMax: number;
+  vMin: number; vMax: number;
+}
+
+export const HARDCOVER_FRONT_UV: FrontUVBounds = {
+  uMin: 0.019, uMax: 0.290,
+  vMin: 0.509, vMax: 0.951,
+};
+
+export const SOFTCOVER_FRONT_UV: FrontUVBounds = {
+  uMin: 0.019, uMax: 0.290,
+  vMin: 0.509, vMax: 0.951,
+}; // TODO: tune after softcover/digest testing
+
+export const ZINE_FRONT_UV: FrontUVBounds = {
+  uMin: 0.019, uMax: 0.290,
+  vMin: 0.509, vMax: 0.951,
+}; // TODO: tune after zine testing
+
+/** Maps each BookSize to its front cover UV island bounds. */
+export const FRONT_UV_MAP: Record<BookSize, FrontUVBounds> = {
+  hardcover: HARDCOVER_FRONT_UV,
+  softcover: SOFTCOVER_FRONT_UV,
+  digest:    SOFTCOVER_FRONT_UV,  // reuses Softcover.glb
+  zine:      ZINE_FRONT_UV,
+  letter:    HARDCOVER_FRONT_UV,  // reuses Hardcover.glb
+};
