@@ -155,7 +155,7 @@ export interface FrontUVBounds {
 
 export const HARDCOVER_FRONT_UV: FrontUVBounds = {
   uMin: 0.019, uMax: 0.290,
-  vMin: 0.509, vMax: 0.951,
+  vMin: 0.495, vMax: 0.965, // expanded from 0.509/0.951 — shows full top/bottom
 };
 
 export const SOFTCOVER_FRONT_UV: FrontUVBounds = {

@@ -246,17 +246,24 @@ function splitCoverGeometry(
   const topAreas = Array.from(uvAreas).filter(a => a > 0).sort((a, b) => b - a).slice(0, 10);
   console.log("[useBookModel] top UV triangle areas:", topAreas.map(a => a.toFixed(6)));
 
-  // ── Pass 2: bin triangles by UV area + UV u-coordinate ───────────────────────
-  // Front cover UV island sits at u < FRONT_U_MAX (≈ 0.35, Blender-confirmed).
-  // Back cover island is the adjacent region; both have similar UV areas, so
-  // the area filter alone cannot distinguish them — the u-coordinate does.
+  // ── Pass 2: bin triangles — back/spine to rest, everything else to front ──────
+  // Back cover and spine are identified as: large UV area AND avgU >= FRONT_U_MAX.
+  // Everything else — the front face AND all board edge faces — goes to frontGeo
+  // so the cover texture wraps realistically over the edges.
+  //
+  // Old logic: isFront = isLargeUV && avgU < FRONT_U_MAX
+  //   Problem: edge triangles have small UV area, so !isLargeUV sent them to
+  //   restGeo, where they rendered as sampled color instead of cover texture.
+  //
+  // New logic: isRest = isLargeUV && avgU >= FRONT_U_MAX  (back + spine only)
+  //            isFront = !isRest                          (front + edges)
   const frontPositions: number[] = [];
   const frontNormals:   number[] = [];
   const frontUVs:       number[] = [];
   const restPositions:  number[] = [];
   const restNormals:    number[] = [];
   const restUVs:        number[] = [];
-  let backExcluded = 0;
+  let restCount = 0;
   const candidateUSample: number[] = []; // first 10 large-UV avg-U values for diagnostics
 
   for (let t = 0; t < triCount; t++) {
@@ -267,17 +274,16 @@ function splitCoverGeometry(
     // Average U of triangle's three UV coordinates
     const avgU = (uvAttr.getX(i0) + uvAttr.getX(i1) + uvAttr.getX(i2)) / 3;
 
-    if (isLargeUV) {
-      if (candidateUSample.length < 10) candidateUSample.push(avgU);
-      if (avgU >= FRONT_U_MAX) backExcluded++;
-    }
+    if (isLargeUV && candidateUSample.length < 10) candidateUSample.push(avgU);
 
-    // Front face: large UV island AND u < FRONT_U_MAX
-    const isFront = isLargeUV && avgU < FRONT_U_MAX;
+    // Rest = back face + spine: large UV island AND u >= FRONT_U_MAX
+    // Front = everything else: front face, board edges, any thin strips
+    const isRest = isLargeUV && avgU >= FRONT_U_MAX;
+    if (isRest) restCount++;
 
-    const tPos = isFront ? frontPositions : restPositions;
-    const tNrm = isFront ? frontNormals   : restNormals;
-    const tUV  = isFront ? frontUVs       : restUVs;
+    const tPos = isRest ? restPositions : frontPositions;
+    const tNrm = isRest ? restNormals   : frontNormals;
+    const tUV  = isRest ? restUVs       : frontUVs;
 
     for (const vi of [i0, i1, i2]) {
       tPos.push(posAttr.getX(vi),    posAttr.getY(vi),    posAttr.getZ(vi));
@@ -291,9 +297,9 @@ function splitCoverGeometry(
     candidateUSample.map(u => u.toFixed(4)),
   );
   console.log(
-    `[useBookModel] After U filter (< ${FRONT_U_MAX}): ` +
-    `front=${frontPositions.length / 9} tris, ` +
-    `non-front large-UV excluded=${backExcluded}`,
+    `[useBookModel] Split result: front+edges=${frontPositions.length / 9} tris, ` +
+    `back+spine (rest)=${restPositions.length / 9} tris ` +
+    `[isRest = isLargeUV && avgU >= ${FRONT_U_MAX}]`,
   );
 
   if (frontPositions.length === 0 || restPositions.length === 0) {
