@@ -219,34 +219,52 @@ function splitCoverGeometry(
   const topAreas = Array.from(uvAreas).filter(a => a > 0).sort((a, b) => b - a).slice(0, 10);
   console.log("[useBookModel] top UV triangle areas:", topAreas.map(a => a.toFixed(6)));
 
-  // ── Pass 2: bin triangles by UV area AND Z position ──────────────────────────
-  // Collect Z values of large-UV candidates before filtering to aid diagnostics.
-  const candidateZValues: number[] = [];
-  let backExcluded = 0;
+  // ── Pass 2a: collect large-UV candidate Z values to find the midpoint ──────────
+  // The model may not be Z-centred (both front and back faces can sit at positive Z).
+  // Using a fixed threshold of 0 is unreliable; using the midpoint of the candidate
+  // Z range is model-agnostic — front face is always at higher Z than back face.
+  let candidateMinZ =  Infinity;
+  let candidateMaxZ = -Infinity;
+  const candidateZSample: number[] = []; // first 10 for the diagnostic log
 
+  for (let t = 0; t < triCount; t++) {
+    if (uvAreas[t] < areaThreshold) continue; // only large-UV triangles qualify
+    const i0 = idx.getX(t * 3), i1 = idx.getX(t * 3 + 1), i2 = idx.getX(t * 3 + 2);
+    const avgZ = (posAttr.getZ(i0) + posAttr.getZ(i1) + posAttr.getZ(i2)) / 3;
+    if (avgZ < candidateMinZ) candidateMinZ = avgZ;
+    if (avgZ > candidateMaxZ) candidateMaxZ = avgZ;
+    if (candidateZSample.length < 10) candidateZSample.push(avgZ);
+  }
+
+  const midZ = (candidateMinZ + candidateMaxZ) / 2;
+  console.log(
+    `[useBookModel] large-UV Z range: min=${candidateMinZ.toFixed(4)}, ` +
+    `max=${candidateMaxZ.toFixed(4)}, midZ=${midZ.toFixed(4)}`,
+  );
+  console.log(
+    "[useBookModel] large-UV candidate Z sample (first 10):",
+    candidateZSample.map(z => z.toFixed(4)),
+  );
+
+  // ── Pass 2b: bin triangles using the computed midpoint as front/back boundary ──
   const frontPositions: number[] = [];
   const frontNormals:   number[] = [];
   const frontUVs:       number[] = [];
   const restPositions:  number[] = [];
   const restNormals:    number[] = [];
   const restUVs:        number[] = [];
+  let backExcluded = 0;
 
   for (let t = 0; t < triCount; t++) {
     const i0 = idx.getX(t * 3), i1 = idx.getX(t * 3 + 1), i2 = idx.getX(t * 3 + 2);
 
-    // Primary filter: large UV island (front/back faces qualify; thin edges do not)
     const isLargeUV = uvAreas[t] >= areaThreshold;
-
-    // Secondary filter: front face has positive avg Z; back face has negative avg Z
     const avgZ = (posAttr.getZ(i0) + posAttr.getZ(i1) + posAttr.getZ(i2)) / 3;
 
-    if (isLargeUV) {
-      candidateZValues.push(avgZ);
-      if (avgZ <= 0) backExcluded++;
-    }
+    // Front = large UV area AND above the midpoint of the front/back Z range
+    const isFront = isLargeUV && avgZ > midZ;
 
-    // Triangle is front face only if it passes BOTH filters
-    const isFront = isLargeUV && avgZ > 0;
+    if (isLargeUV && !isFront) backExcluded++;
 
     const tPos = isFront ? frontPositions : restPositions;
     const tNrm = isFront ? frontNormals   : restNormals;
@@ -259,13 +277,8 @@ function splitCoverGeometry(
     }
   }
 
-  // Diagnostic: Z values of large-UV candidates (first 10) + how many back faces excluded
   console.log(
-    "[useBookModel] large-UV candidate Z values (first 10):",
-    candidateZValues.slice(0, 10).map(z => z.toFixed(4)),
-  );
-  console.log(
-    `[useBookModel] After Z filter: front=${frontPositions.length / 9} tris, ` +
+    `[useBookModel] After Z midpoint filter: front=${frontPositions.length / 9} tris, ` +
     `back candidates excluded=${backExcluded}`,
   );
 
