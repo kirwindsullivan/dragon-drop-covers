@@ -187,7 +187,7 @@ const FRONT_U_MAX = 0.29; // was 0.30 — tightened to exclude back face boundar
 
 function splitCoverGeometry(
   geo: THREE.BufferGeometry,
-  areaFraction = 0.1,
+  areaFraction = 0.02, // was 0.10 — 10% excluded most front-face tris; 2% captures them correctly
 ): { frontGeo: THREE.BufferGeometry; edgeGeo: THREE.BufferGeometry; restGeo: THREE.BufferGeometry } | null {
   const posAttr    = geo.attributes.position as THREE.BufferAttribute | undefined;
   const normalAttr = geo.attributes.normal   as THREE.BufferAttribute | undefined;
@@ -245,9 +245,18 @@ function splitCoverGeometry(
     `threshold=${areaThreshold.toFixed(6)} (${areaFraction * 100}% of max), ` +
     `triCount=${triCount}`,
   );
-  // Log top-10 UV areas for threshold tuning
-  const topAreas = Array.from(uvAreas).filter(a => a > 0).sort((a, b) => b - a).slice(0, 10);
-  console.log("[useBookModel] top UV triangle areas:", topAreas.map(a => a.toFixed(6)));
+  // ── UV area distribution diagnostics ─────────────────────────────────────────
+  // Used to tune areaFraction.  Front-face triangles should form a visible cluster
+  // in the top-20; edge and degenerate tris cluster near the bottom.
+  const sortedAreas = Array.from(uvAreas).sort((a, b) => b - a);
+  const posAreas    = sortedAreas.filter(a => a > 0);
+  console.log("[useBookModel] top 20 UV areas:",    sortedAreas.slice(0,  20).map(a => a.toFixed(8)));
+  console.log("[useBookModel] bottom 20 UV areas:", sortedAreas.slice(-20).map(a => a.toFixed(8)));
+  console.log("[useBookModel] median UV area:", (posAreas[Math.floor(posAreas.length / 2)] ?? 0).toFixed(8));
+  console.log("[useBookModel] areas above  1% of max:", sortedAreas.filter(a => a > maxArea * 0.01).length);
+  console.log("[useBookModel] areas above  2% of max:", sortedAreas.filter(a => a > maxArea * 0.02).length);
+  console.log("[useBookModel] areas above  5% of max:", sortedAreas.filter(a => a > maxArea * 0.05).length);
+  console.log("[useBookModel] areas above 10% of max:", sortedAreas.filter(a => a > maxArea * 0.10).length);
 
   // ── Pass 2: three-way bin — front face / board edges / back+spine ─────────────
   //
