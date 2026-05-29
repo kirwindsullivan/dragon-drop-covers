@@ -187,7 +187,7 @@ const FRONT_U_MAX = 0.29; // was 0.30 — tightened to exclude back face boundar
 
 function splitCoverGeometry(
   geo: THREE.BufferGeometry,
-  areaFraction = 0.02, // was 0.10 — 10% excluded most front-face tris; 2% captures them correctly
+  areaFraction = 0.005, // was 0.10→0.02→0.005 — tuning to capture all front-face tris correctly
 ): { frontGeo: THREE.BufferGeometry; edgeGeo: THREE.BufferGeometry; restGeo: THREE.BufferGeometry } | null {
   const posAttr    = geo.attributes.position as THREE.BufferAttribute | undefined;
   const normalAttr = geo.attributes.normal   as THREE.BufferAttribute | undefined;
@@ -253,10 +253,27 @@ function splitCoverGeometry(
   console.log("[useBookModel] top 20 UV areas:",    sortedAreas.slice(0,  20).map(a => a.toFixed(8)));
   console.log("[useBookModel] bottom 20 UV areas:", sortedAreas.slice(-20).map(a => a.toFixed(8)));
   console.log("[useBookModel] median UV area:", (posAreas[Math.floor(posAreas.length / 2)] ?? 0).toFixed(8));
+  console.log("[useBookModel] areas above 0.5% of max:", sortedAreas.filter(a => a > maxArea * 0.005).length);
   console.log("[useBookModel] areas above  1% of max:", sortedAreas.filter(a => a > maxArea * 0.01).length);
   console.log("[useBookModel] areas above  2% of max:", sortedAreas.filter(a => a > maxArea * 0.02).length);
   console.log("[useBookModel] areas above  5% of max:", sortedAreas.filter(a => a > maxArea * 0.05).length);
   console.log("[useBookModel] areas above 10% of max:", sortedAreas.filter(a => a > maxArea * 0.10).length);
+
+  // Log UV areas of the first 20 triangles that are confirmed to be on the front
+  // face (avgU < FRONT_U_MAX), regardless of area.  This shows exactly where the
+  // front-face tris cluster so the threshold can be set to include all of them.
+  {
+    const frontUDiagAreas: number[] = [];
+    for (let t = 0; t < triCount && frontUDiagAreas.length < 20; t++) {
+      const i0 = idx.getX(t * 3), i1 = idx.getX(t * 3 + 1), i2 = idx.getX(t * 3 + 2);
+      const avgU = (uvAttr.getX(i0) + uvAttr.getX(i1) + uvAttr.getX(i2)) / 3;
+      if (avgU < FRONT_U_MAX) frontUDiagAreas.push(uvAreas[t]);
+    }
+    console.log(
+      `[useBookModel] UV areas of first 20 front-U tris (avgU < ${FRONT_U_MAX}):`,
+      frontUDiagAreas.map(a => a.toFixed(8)),
+    );
+  }
 
   // ── Pass 2: three-way bin — front face / board edges / back+spine ─────────────
   //
@@ -647,6 +664,9 @@ async function buildCoverMaterial(
   cloned.normalMap = null;
   cloned.bumpMap   = null;
   cloned.color.set("#888888");
+  // GLB materials often have doubleSided=true.  The cover texture must only appear
+  // on the outside face — FrontSide prevents it rendering on the inside of the board.
+  cloned.side          = THREE.FrontSide;
   cloned.needsUpdate   = true;
   cloned.userData.ours = true;
   console.log("[useBookModel] normalMap after null:", cloned.normalMap);
@@ -663,6 +683,8 @@ async function buildCoverMaterial(
       metalness:       entry.mat.metalness,
       color:           new THREE.Color("#888888"),
       envMapIntensity: entry.mat.envMapIntensity,
+      // FrontSide: prevent spine/back/edge texture from rendering on inside surfaces
+      side:            THREE.FrontSide,
     });
     restMat.userData.ours = true;
 
