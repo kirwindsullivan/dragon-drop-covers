@@ -83,9 +83,16 @@ function disposeClone(group: THREE.Group): void {
   group.traverse((node) => {
     const mesh = node as THREE.Mesh;
     if (!mesh.isMesh) return;
-    // Dispose owned geometries (e.g. from splitCoverGeometry)
+    // Dispose owned geometries (tagged userData.ours=true by splitCoverGeometry)
     if (mesh.geometry?.userData?.ours) {
       mesh.geometry.dispose();
+    }
+    // Belt-and-suspenders: also dispose explicit splitGeo references stored by
+    // buildCoverMaterial (catches any geometry that lost its userData.ours tag)
+    const splitGeo = mesh.userData.splitGeo as THREE.BufferGeometry | undefined;
+    if (splitGeo) {
+      splitGeo.dispose();
+      delete mesh.userData.splitGeo;
     }
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
@@ -131,22 +138,27 @@ function sampleAverageColor(img: HTMLImageElement): THREE.Color {
   );
 }
 
-// ─── Split cover geometry by face normal ─────────────────────────────────────
-// Takes an indexed BufferGeometry and bins each triangle into one of two groups
-// based on the average Z component of its vertex normals:
+// ─── Split cover geometry by UV triangle area ────────────────────────────────
+// Identifies the front cover face by UV area rather than by normal direction.
+// The front face always occupies the largest UV island regardless of which local
+// axis its normals point along (important for GLTF exports from Blender where the
+// front face may be oriented along -Y or some other axis in local space).
 //
-//   frontGeo — triangles whose avg vertex normal Z >= threshold  (front face, +Z)
-//   restGeo  — all other triangles                               (spine, back, edges)
+// Algorithm:
+//   Pass 1 — compute the UV area (cross-product magnitude) of every triangle and
+//             find the maximum.
+//   Pass 2 — triangles whose UV area >= maxArea * areaFraction go into frontGeo;
+//             everything else (spine, back, top/bottom edges) goes into restGeo.
 //
-// Returns null if geometry is non-indexed, lacks required attributes (position /
-// normal / uv), or if either resulting group would be empty (miscalibrated threshold).
+// Returns null if the geometry is non-indexed, lacks required attributes, or
+// either output group would be empty.
 //
 // Both output geometries are non-indexed and tagged userData.ours=true so
 // disposeClone can safely free them on model swap.
 
 function splitCoverGeometry(
   geo: THREE.BufferGeometry,
-  threshold = 0.7,
+  areaFraction = 0.1,
 ): { frontGeo: THREE.BufferGeometry; restGeo: THREE.BufferGeometry } | null {
   const posAttr    = geo.attributes.position as THREE.BufferAttribute | undefined;
   const normalAttr = geo.attributes.normal   as THREE.BufferAttribute | undefined;
@@ -167,6 +179,48 @@ function splitCoverGeometry(
     return null;
   }
 
+  // ── Diagnostic: log dominant normal directions in the mesh ───────────────────
+  // Helps identify which local axis the front face points along (e.g. -Y on Blender
+  // exports) when tuning is needed.  Buckets rounded to 0.5 steps so near-axis
+  // normals collapse into one bucket.
+  {
+    const nArr = normalAttr.array as Float32Array;
+    const buckets: Record<string, number> = {};
+    for (let i = 0; i < nArr.length; i += 3) {
+      const key = `${Math.round(nArr[i] * 2) / 2},${Math.round(nArr[i + 1] * 2) / 2},${Math.round(nArr[i + 2] * 2) / 2}`;
+      buckets[key] = (buckets[key] ?? 0) + 1;
+    }
+    const top10 = Object.entries(buckets).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    console.log("[useBookModel] top face normals by vertex count:", top10);
+  }
+
+  const triCount = Math.floor(idx.count / 3);
+
+  // ── Pass 1: compute UV area per triangle ─────────────────────────────────────
+  const uvAreas = new Float32Array(triCount);
+  let maxArea = 0;
+  for (let t = 0; t < triCount; t++) {
+    const i0 = idx.getX(t * 3), i1 = idx.getX(t * 3 + 1), i2 = idx.getX(t * 3 + 2);
+    const u0 = uvAttr.getX(i0), v0 = uvAttr.getY(i0);
+    const u1 = uvAttr.getX(i1), v1 = uvAttr.getY(i1);
+    const u2 = uvAttr.getX(i2), v2 = uvAttr.getY(i2);
+    // Signed area via 2D cross product; abs gives unsigned UV-space area
+    const area = Math.abs((u1 - u0) * (v2 - v0) - (u2 - u0) * (v1 - v0)) * 0.5;
+    uvAreas[t] = area;
+    if (area > maxArea) maxArea = area;
+  }
+
+  const areaThreshold = maxArea * areaFraction;
+  console.log(
+    `[useBookModel] UV area: max=${maxArea.toFixed(6)}, ` +
+    `threshold=${areaThreshold.toFixed(6)} (${areaFraction * 100}% of max), ` +
+    `triCount=${triCount}`,
+  );
+  // Log top-10 UV areas for threshold tuning
+  const topAreas = Array.from(uvAreas).filter(a => a > 0).sort((a, b) => b - a).slice(0, 10);
+  console.log("[useBookModel] top UV triangle areas:", topAreas.map(a => a.toFixed(6)));
+
+  // ── Pass 2: bin triangles by UV area ─────────────────────────────────────────
   const frontPositions: number[] = [];
   const frontNormals:   number[] = [];
   const frontUVs:       number[] = [];
@@ -174,16 +228,10 @@ function splitCoverGeometry(
   const restNormals:    number[] = [];
   const restUVs:        number[] = [];
 
-  const triCount = Math.floor(idx.count / 3);
   for (let t = 0; t < triCount; t++) {
-    const i0 = idx.getX(t * 3 + 0);
-    const i1 = idx.getX(t * 3 + 1);
-    const i2 = idx.getX(t * 3 + 2);
+    const i0 = idx.getX(t * 3), i1 = idx.getX(t * 3 + 1), i2 = idx.getX(t * 3 + 2);
 
-    // Average normal Z across three vertices — front-face polygons point toward +Z
-    const avgNz = (normalAttr.getZ(i0) + normalAttr.getZ(i1) + normalAttr.getZ(i2)) / 3;
-
-    const isFront = avgNz >= threshold;
+    const isFront = uvAreas[t] >= areaThreshold;
     const tPos = isFront ? frontPositions : restPositions;
     const tNrm = isFront ? frontNormals   : restNormals;
     const tUV  = isFront ? frontUVs       : restUVs;
@@ -199,7 +247,7 @@ function splitCoverGeometry(
     console.warn(
       `[useBookModel] splitCoverGeometry: split produced an empty group ` +
       `(front=${frontPositions.length / 9} tris, rest=${restPositions.length / 9} tris, ` +
-      `threshold=${threshold}) — falling back`,
+      `areaFraction=${areaFraction}) — falling back`,
     );
     return null;
   }
@@ -216,25 +264,25 @@ function splitCoverGeometry(
   const frontGeo = makeGeo(frontPositions, frontNormals, frontUVs);
   const restGeo  = makeGeo(restPositions,  restNormals,  restUVs);
 
-  // UV diagnostic — log front-face UV bounds to verify correct face selection.
-  // If u/v ranges look wrong (e.g. very narrow or outside [0,1]) the threshold
-  // may need tuning or the model's normals may not align with world +Z.
-  {
-    const uvBuf = frontGeo.attributes.uv as THREE.BufferAttribute;
+  // UV diagnostic — log bounds for BOTH halves to verify the split is selecting
+  // the correct face.  Front should span a large rectangular UV region; rest
+  // will typically have a similar or smaller range but different distribution.
+  function uvBounds(g: THREE.BufferGeometry): string {
+    const buf = g.attributes.uv as THREE.BufferAttribute;
     let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
-    for (let i = 0; i < uvBuf.count; i++) {
-      const u = uvBuf.getX(i), v = uvBuf.getY(i);
+    for (let i = 0; i < buf.count; i++) {
+      const u = buf.getX(i), v = buf.getY(i);
       if (u < uMin) uMin = u; if (u > uMax) uMax = u;
       if (v < vMin) vMin = v; if (v > vMax) vMax = v;
     }
-    console.log(
-      `[useBookModel] splitCoverGeometry: ` +
-      `front=${frontPositions.length / 9} tris (avgNz >= ${threshold}), ` +
-      `rest=${restPositions.length / 9} tris | ` +
-      `front UV u=[${uMin.toFixed(3)}, ${uMax.toFixed(3)}] ` +
-      `v=[${vMin.toFixed(3)}, ${vMax.toFixed(3)}]`,
-    );
+    return `u=[${uMin.toFixed(3)}, ${uMax.toFixed(3)}] v=[${vMin.toFixed(3)}, ${vMax.toFixed(3)}]`;
   }
+  console.log(
+    `[useBookModel] splitCoverGeometry: ` +
+    `front=${frontPositions.length / 9} tris (UV area >= ${areaFraction * 100}% of max), ` +
+    `rest=${restPositions.length / 9} tris | ` +
+    `front UV ${uvBounds(frontGeo)} | rest UV ${uvBounds(restGeo)}`,
+  );
 
   return { frontGeo, restGeo };
 }
@@ -552,6 +600,12 @@ async function buildCoverMaterial(
     // Replace original mesh with rest geometry (spine/back/edges) + rest material
     entry.mesh.geometry = split.restGeo;
     entry.mesh.material = restMat;
+
+    // Explicit splitGeo references on each mesh — belt-and-suspenders alongside
+    // userData.ours on the geometry.  disposeClone checks both paths so neither
+    // a missed tag nor a THREE.js version quirk can leak a BufferGeometry.
+    frontMesh.userData.splitGeo  = split.frontGeo;
+    entry.mesh.userData.splitGeo = split.restGeo;
 
     restMatRef.current = restMat;
     console.log("[useBookModel] Cover mesh split: front face separated from spine/back");
