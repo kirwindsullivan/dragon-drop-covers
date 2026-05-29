@@ -275,15 +275,19 @@ function splitCoverGeometry(
     );
   }
 
-  // ── Pass 2: three-way bin — front face / board edges / back+spine ─────────────
+  // ── Pass 2: three-way bin — INVERTED UV area logic ───────────────────────────
   //
-  //   isFront = isLargeUV && avgU < FRONT_U_MAX   → frontGeo (cover texture + UV transform)
-  //   isRest  = isLargeUV && avgU >= FRONT_U_MAX  → restGeo  (sampled color, no texture)
-  //   isEdge  = !isLargeUV                        → edgeGeo  (sampled color, no texture)
+  // Diagnostic finding: for this GLB the front cover UV island is tiny (≈0)
+  // in UV space, while back face + spine occupy the LARGE UV islands.
+  // The original assumption (large UV = front) was backwards for this model.
   //
-  // Edge triangles (board thickness faces) are separated out because their UV coords
-  // differ from the front-face island — the UV transform for front wouldn't fit them
-  // correctly, causing visible stretching.  They share restMat (same solid color).
+  // Corrected rules:
+  //   restGeo  — large UV area         → back cover + spine (sampled color)
+  //   frontGeo — small UV && avgU < FRONT_U_MAX  → front cover face (cover texture)
+  //   edgeGeo  — small UV && avgU >= FRONT_U_MAX → board edges (sampled color)
+  //
+  // No U filter is needed for isRest — all large-UV triangles are back/spine
+  // regardless of their U position.
   const frontPositions: number[] = [];
   const frontNormals:   number[] = [];
   const frontUVs:       number[] = [];
@@ -296,7 +300,7 @@ function splitCoverGeometry(
   let frontCount = 0;
   let edgeCount  = 0;
   let restCount  = 0;
-  const candidateUSample: number[] = []; // first 10 large-UV avg-U values for diagnostics
+  const frontUDiagSample: number[] = []; // first 10 front-candidate avgU values
 
   for (let t = 0; t < triCount; t++) {
     const i0 = idx.getX(t * 3), i1 = idx.getX(t * 3 + 1), i2 = idx.getX(t * 3 + 2);
@@ -306,15 +310,19 @@ function splitCoverGeometry(
     // Average U of triangle's three UV coordinates
     const avgU = (uvAttr.getX(i0) + uvAttr.getX(i1) + uvAttr.getX(i2)) / 3;
 
-    if (isLargeUV && candidateUSample.length < 10) candidateUSample.push(avgU);
+    // Inverted: large UV = back+spine; small UV = front or edge
+    const isRest  = isLargeUV;
+    const isFront = !isLargeUV && avgU < FRONT_U_MAX;
+    // isEdge = !isLargeUV && avgU >= FRONT_U_MAX
 
-    const isFront = isLargeUV && avgU < FRONT_U_MAX;
-    const isRest  = isLargeUV && avgU >= FRONT_U_MAX;
-    // isEdge = !isFront && !isRest  (i.e. !isLargeUV — board thickness faces)
-
-    if (isFront)      frontCount++;
-    else if (isRest)  restCount++;
-    else              edgeCount++;
+    if (isFront) {
+      frontCount++;
+      if (frontUDiagSample.length < 10) frontUDiagSample.push(avgU);
+    } else if (isRest) {
+      restCount++;
+    } else {
+      edgeCount++;
+    }
 
     const tPos = isFront ? frontPositions : isRest ? restPositions : edgePositions;
     const tNrm = isFront ? frontNormals   : isRest ? restNormals   : edgeNormals;
@@ -328,13 +336,12 @@ function splitCoverGeometry(
   }
 
   console.log(
-    "[useBookModel] large-UV candidate avgU sample (first 10):",
-    candidateUSample.map(u => u.toFixed(4)),
+    "[useBookModel] front-candidate avgU sample (first 10):",
+    frontUDiagSample.map(u => u.toFixed(4)),
   );
   console.log(
-    `[useBookModel] Split result: front=${frontCount} tris, ` +
-    `edges=${edgeCount} tris, rest=${restCount} tris ` +
-    `[isFront=isLargeUV&&avgU<${FRONT_U_MAX}, isRest=isLargeUV&&avgU>=${FRONT_U_MAX}, isEdge=!isLargeUV]`,
+    `[useBookModel] Inverted split: front=${frontCount} (small UV, avgU<${FRONT_U_MAX}), ` +
+    `rest=${restCount} (large UV = back+spine), edge=${edgeCount}`,
   );
 
   // edgeGeo may legitimately be empty (model has no board edges) — not an error.
