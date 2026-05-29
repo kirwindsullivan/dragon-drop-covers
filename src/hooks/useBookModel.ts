@@ -98,6 +98,9 @@ function disposeClone(group: THREE.Group): void {
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
       if (!m || !m.userData.ours) continue;
+      // Guard: restMat is shared between edgeMesh and restMesh — only dispose once.
+      if (m.userData.disposed) continue;
+      m.userData.disposed = true;
       const pm = m as THREE.MeshPhysicalMaterial;
       // Dispose textures we created
       for (const key of ["map", "normalMap", "roughnessMap"] as const) {
@@ -161,23 +164,23 @@ function applyCoverUVTransform(tex: THREE.Texture, bounds: FrontUVBounds): void 
   tex.needsUpdate = true;
 }
 
-// ─── Split cover geometry by UV area + UV u-coordinate ───────────────────────
-// Two-filter approach to isolate the front cover face from back/spine/edges.
+// ─── Split cover geometry into three groups ───────────────────────────────────
 // Uses the confirmed Blender UV island layout (five non-overlapping islands):
 //
-//   Filter 1 — UV area: large-UV-area triangles are flat cover faces; thin edge
-//               and spine triangles are excluded (area >= maxArea * areaFraction).
+//   frontGeo — large UV area AND avgU < FRONT_U_MAX  (front cover face)
+//              → cover texture with UV transform
 //
-//   Filter 2 — UV u-coordinate: the front cover island sits in u < FRONT_U_MAX
-//               (≈ 0.35 per Blender UV editor).  Back cover is in the adjacent
-//               island to the right.  This is stable across model orientations
-//               and Z offsets, unlike a position-based threshold.
+//   edgeGeo  — small UV area (board edges, thin strips that aren't flat faces)
+//              → solid sampled color (same material as restGeo, no UV transform)
+//              These are the physical board-thickness faces.  Their own UV coords
+//              would stretch the cover art so they get a flat color instead.
+//
+//   restGeo  — large UV area AND avgU >= FRONT_U_MAX  (back cover + spine)
+//              → solid sampled color
 //
 // Returns null if the geometry is non-indexed, lacks required attributes, or
-// either output group would be empty.
-//
-// Both output geometries are non-indexed and tagged userData.ours=true so
-// disposeClone can safely free them on model swap.
+// front/rest groups are both empty.  edgeGeo may be empty (no edges) — that is
+// not an error.  All output geometries are tagged userData.ours=true.
 
 /** UV u-coordinate upper bound for the front cover island (Blender-confirmed). */
 const FRONT_U_MAX = 0.29; // was 0.30 — tightened to exclude back face boundary triangles
@@ -185,7 +188,7 @@ const FRONT_U_MAX = 0.29; // was 0.30 — tightened to exclude back face boundar
 function splitCoverGeometry(
   geo: THREE.BufferGeometry,
   areaFraction = 0.1,
-): { frontGeo: THREE.BufferGeometry; restGeo: THREE.BufferGeometry } | null {
+): { frontGeo: THREE.BufferGeometry; edgeGeo: THREE.BufferGeometry; restGeo: THREE.BufferGeometry } | null {
   const posAttr    = geo.attributes.position as THREE.BufferAttribute | undefined;
   const normalAttr = geo.attributes.normal   as THREE.BufferAttribute | undefined;
   const uvAttr     = geo.attributes.uv       as THREE.BufferAttribute | undefined;
@@ -246,24 +249,27 @@ function splitCoverGeometry(
   const topAreas = Array.from(uvAreas).filter(a => a > 0).sort((a, b) => b - a).slice(0, 10);
   console.log("[useBookModel] top UV triangle areas:", topAreas.map(a => a.toFixed(6)));
 
-  // ── Pass 2: bin triangles — back/spine to rest, everything else to front ──────
-  // Back cover and spine are identified as: large UV area AND avgU >= FRONT_U_MAX.
-  // Everything else — the front face AND all board edge faces — goes to frontGeo
-  // so the cover texture wraps realistically over the edges.
+  // ── Pass 2: three-way bin — front face / board edges / back+spine ─────────────
   //
-  // Old logic: isFront = isLargeUV && avgU < FRONT_U_MAX
-  //   Problem: edge triangles have small UV area, so !isLargeUV sent them to
-  //   restGeo, where they rendered as sampled color instead of cover texture.
+  //   isFront = isLargeUV && avgU < FRONT_U_MAX   → frontGeo (cover texture + UV transform)
+  //   isRest  = isLargeUV && avgU >= FRONT_U_MAX  → restGeo  (sampled color, no texture)
+  //   isEdge  = !isLargeUV                        → edgeGeo  (sampled color, no texture)
   //
-  // New logic: isRest = isLargeUV && avgU >= FRONT_U_MAX  (back + spine only)
-  //            isFront = !isRest                          (front + edges)
+  // Edge triangles (board thickness faces) are separated out because their UV coords
+  // differ from the front-face island — the UV transform for front wouldn't fit them
+  // correctly, causing visible stretching.  They share restMat (same solid color).
   const frontPositions: number[] = [];
   const frontNormals:   number[] = [];
   const frontUVs:       number[] = [];
+  const edgePositions:  number[] = [];
+  const edgeNormals:    number[] = [];
+  const edgeUVs:        number[] = [];
   const restPositions:  number[] = [];
   const restNormals:    number[] = [];
   const restUVs:        number[] = [];
-  let restCount = 0;
+  let frontCount = 0;
+  let edgeCount  = 0;
+  let restCount  = 0;
   const candidateUSample: number[] = []; // first 10 large-UV avg-U values for diagnostics
 
   for (let t = 0; t < triCount; t++) {
@@ -276,14 +282,17 @@ function splitCoverGeometry(
 
     if (isLargeUV && candidateUSample.length < 10) candidateUSample.push(avgU);
 
-    // Rest = back face + spine: large UV island AND u >= FRONT_U_MAX
-    // Front = everything else: front face, board edges, any thin strips
-    const isRest = isLargeUV && avgU >= FRONT_U_MAX;
-    if (isRest) restCount++;
+    const isFront = isLargeUV && avgU < FRONT_U_MAX;
+    const isRest  = isLargeUV && avgU >= FRONT_U_MAX;
+    // isEdge = !isFront && !isRest  (i.e. !isLargeUV — board thickness faces)
 
-    const tPos = isRest ? restPositions : frontPositions;
-    const tNrm = isRest ? restNormals   : frontNormals;
-    const tUV  = isRest ? restUVs       : frontUVs;
+    if (isFront)      frontCount++;
+    else if (isRest)  restCount++;
+    else              edgeCount++;
+
+    const tPos = isFront ? frontPositions : isRest ? restPositions : edgePositions;
+    const tNrm = isFront ? frontNormals   : isRest ? restNormals   : edgeNormals;
+    const tUV  = isFront ? frontUVs       : isRest ? restUVs       : edgeUVs;
 
     for (const vi of [i0, i1, i2]) {
       tPos.push(posAttr.getX(vi),    posAttr.getY(vi),    posAttr.getZ(vi));
@@ -297,15 +306,17 @@ function splitCoverGeometry(
     candidateUSample.map(u => u.toFixed(4)),
   );
   console.log(
-    `[useBookModel] Split result: front+edges=${frontPositions.length / 9} tris, ` +
-    `back+spine (rest)=${restPositions.length / 9} tris ` +
-    `[isRest = isLargeUV && avgU >= ${FRONT_U_MAX}]`,
+    `[useBookModel] Split result: front=${frontCount} tris, ` +
+    `edges=${edgeCount} tris, rest=${restCount} tris ` +
+    `[isFront=isLargeUV&&avgU<${FRONT_U_MAX}, isRest=isLargeUV&&avgU>=${FRONT_U_MAX}, isEdge=!isLargeUV]`,
   );
 
+  // edgeGeo may legitimately be empty (model has no board edges) — not an error.
+  // Only bail out if front or rest are empty (means the UV threshold is wrong).
   if (frontPositions.length === 0 || restPositions.length === 0) {
     console.warn(
       `[useBookModel] splitCoverGeometry: split produced an empty group ` +
-      `(front=${frontPositions.length / 9} tris, rest=${restPositions.length / 9} tris, ` +
+      `(front=${frontCount} tris, edges=${edgeCount} tris, rest=${restCount} tris, ` +
       `areaFraction=${areaFraction}) — falling back`,
     );
     return null;
@@ -321,13 +332,14 @@ function splitCoverGeometry(
   }
 
   const frontGeo = makeGeo(frontPositions, frontNormals, frontUVs);
+  const edgeGeo  = makeGeo(edgePositions,  edgeNormals,  edgeUVs);
   const restGeo  = makeGeo(restPositions,  restNormals,  restUVs);
 
-  // UV diagnostic — log bounds for BOTH halves to verify the split is selecting
-  // the correct face.  Front should span a large rectangular UV region; rest
-  // will typically have a similar or smaller range but different distribution.
+  // UV diagnostic — log bounds for front and rest to verify the split.
+  // Front should span the confirmed island (u≈0.019–0.290); rest will be elsewhere.
   function uvBounds(g: THREE.BufferGeometry): string {
     const buf = g.attributes.uv as THREE.BufferAttribute;
+    if (buf.count === 0) return "(empty)";
     let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
     for (let i = 0; i < buf.count; i++) {
       const u = buf.getX(i), v = buf.getY(i);
@@ -338,12 +350,11 @@ function splitCoverGeometry(
   }
   console.log(
     `[useBookModel] splitCoverGeometry: ` +
-    `front=${frontPositions.length / 9} tris (large UV + avgZ > 0), ` +
-    `rest=${restPositions.length / 9} tris | ` +
+    `front=${frontCount} tris, edges=${edgeCount} tris, rest=${restCount} tris | ` +
     `front UV ${uvBounds(frontGeo)} | rest UV ${uvBounds(restGeo)}`,
   );
 
-  return { frontGeo, restGeo };
+  return { frontGeo, edgeGeo, restGeo };
 }
 
 // ─── UV region detection ──────────────────────────────────────────────────────
@@ -662,7 +673,7 @@ async function buildCoverMaterial(
     frontMesh.scale.copy(origScale);
     frontMesh.userData.splitGeo = split.frontGeo; // explicit ref for disposeClone
 
-    // Rest mesh: spine / back / edges with sampled average color
+    // Rest mesh: spine / back with sampled average color
     const restMesh = new THREE.Mesh(split.restGeo, restMat);
     restMesh.name = entry.mesh.name + "_rest";
     restMesh.position.copy(origPos);
@@ -670,11 +681,21 @@ async function buildCoverMaterial(
     restMesh.scale.copy(origScale);
     restMesh.userData.splitGeo = split.restGeo; // explicit ref for disposeClone
 
-    // Remove the original mesh entirely — it is replaced by the two split meshes.
+    // Edge mesh: board-thickness faces — shares restMat (same solid color, no UV transform).
+    // edgeGeo may be empty (models without thick board edges); an empty mesh is harmless.
+    const edgeMesh = new THREE.Mesh(split.edgeGeo, restMat);
+    edgeMesh.name = entry.mesh.name + "_edge";
+    edgeMesh.position.copy(origPos);
+    edgeMesh.rotation.copy(origRot);
+    edgeMesh.scale.copy(origScale);
+    edgeMesh.userData.splitGeo = split.edgeGeo; // explicit ref for disposeClone
+
+    // Remove the original mesh entirely — replaced by the three split meshes.
     // Do NOT dispose its geometry or material; they are shared with the GLTF cache.
     parent.remove(entry.mesh);
     parent.add(frontMesh);
     parent.add(restMesh);
+    parent.add(edgeMesh);
 
     restMatRef.current = restMat;
 
